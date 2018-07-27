@@ -8,11 +8,12 @@ import (
 	"strconv"
 
 	"github.com/credentials/go-go-gadget-paillier"
-	raven "github.com/getsentry/raven-go"
+	"github.com/getsentry/raven-go"
 	"github.com/go-errors/errors"
 	"github.com/mhe/gabi"
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/fs"
+	"log"
 )
 
 // This file contains most methods of the Client (c.f. session.go
@@ -397,6 +398,19 @@ func (client *Client) credentialByID(id irma.CredentialIdentifier) (*credential,
 	return nil, nil
 }
 
+// Adapts secret key with the right delta when the scheme managers keyshare has been changed
+func (client *Client) findCredentialSecretKey(smid irma.SchemeManagerIdentifier) (key *big.Int) {
+	//Scheme managers without keyshare server use the direct secretKey
+	if !client.Configuration.SchemeManagers[smid].Distributed(){
+		return client.secretkey.Key
+	}
+
+	keyshareServers := client.keyshareServers[smid]
+	//TODO Why is there only one?
+
+	return new(big.Int).Add(client.secretkey.Key, keyshareServers.deviceKey.Key)
+}
+
 // credential returns the requested credential, or nil if we do not have it.
 func (client *Client) credential(id irma.CredentialTypeIdentifier, counter int) (cred *credential, err error) {
 	// If the requested credential is not in credential map, we check if its attributes were
@@ -422,8 +436,10 @@ func (client *Client) credential(id irma.CredentialTypeIdentifier, counter int) 
 		if pk == nil {
 			return nil, errors.New("unknown public key")
 		}
+
+		log.Println("Nu zou je het credential moeten samenstellen")
 		cred, err := newCredential(&gabi.Credential{
-			Attributes: append([]*big.Int{client.secretkey.Key}, attrs.Ints...),
+			Attributes: append([]*big.Int{client.findCredentialSecretKey(attrs.Info().SchemeManagerID)}, attrs.Ints...),
 			Signature:  sig,
 			Pk:         pk,
 		}, client.Configuration)

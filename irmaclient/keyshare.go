@@ -52,6 +52,7 @@ type keyshareServer struct {
 	PrivateKey              *paillierPrivateKey `json:"keyPair"`
 	SchemeManagerIdentifier irma.SchemeManagerIdentifier
 	token                   string
+	deviceKey               *deviceKey          `json:"deviceKey"` // For device revocation
 }
 
 type keyshareEnrollment struct {
@@ -131,6 +132,7 @@ func newKeyshareServer(
 		URL:                     url,
 		PrivateKey:              privatekey,
 		SchemeManagerIdentifier: schemeManagerIdentifier,
+		deviceKey:               &deviceKey{big.NewInt(0)}, // By default the secret key is not changed
 	}
 	_, err = rand.Read(ks.Nonce)
 	return

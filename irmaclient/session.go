@@ -183,7 +183,7 @@ func (session *session) panicFailure() {
 	}
 }
 
-func (session *session) checkAndUpateConfiguration() bool {
+func (session *session) checkAndUpdateConfiguration() bool {
 	for id := range session.irmaSession.Identifiers().SchemeManagers {
 		manager, contains := session.client.Configuration.SchemeManagers[id]
 		if !contains {
@@ -238,7 +238,7 @@ func (client *Client) NewManualSession(sigrequestJSONString string, handler Hand
 
 	session.Handler.StatusUpdate(session.Action, irma.StatusManualStarted)
 
-	if !session.checkAndUpateConfiguration() {
+	if !session.checkAndUpdateConfiguration() {
 		return
 	}
 
@@ -336,7 +336,7 @@ func (session *session) start() {
 		}
 	}
 
-	if !session.checkAndUpateConfiguration() {
+	if !session.checkAndUpdateConfiguration() {
 		return
 	}
 

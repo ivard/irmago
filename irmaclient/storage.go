@@ -8,6 +8,8 @@ import (
 	"github.com/mhe/gabi"
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/fs"
+	"math/big"
+	"log"
 )
 
 // This file contains the storage struct and its methods,
@@ -181,6 +183,20 @@ func (s *storage) LoadKeyshareServers() (ksses map[irma.SchemeManagerIdentifier]
 	if err := s.load(&ksses, kssFile); err != nil {
 		return nil, err
 	}
+
+	// Code to update existing apps
+	changed := false
+	for _, kss := range ksses {
+		if kss.deviceKey == nil {
+			log.Println("Dit zou moeten gebeuren")
+			kss.deviceKey = big.NewInt(0)
+			changed = true
+		}
+	}
+	if changed {
+		s.StoreKeyshareServers(ksses)
+	}
+
 	return ksses, nil
 }
 
