@@ -15,7 +15,7 @@ import (
 // This file contains the storage struct and its methods,
 // and some general filesystem functions.
 
-// Storage provider for a Client
+// Storage provider for a client
 type storage struct {
 	storagePath   string
 	Configuration *irma.Configuration
@@ -187,9 +187,9 @@ func (s *storage) LoadKeyshareServers() (ksses map[irma.SchemeManagerIdentifier]
 	// Code to update existing apps
 	changed := false
 	for _, kss := range ksses {
-		if kss.deviceKey == nil {
+		if kss.DeviceKey == nil {
 			log.Println("Dit zou moeten gebeuren")
-			kss.deviceKey = big.NewInt(0)
+			kss.DeviceKey = &deviceKey{big.NewInt(0)}
 			changed = true
 		}
 	}

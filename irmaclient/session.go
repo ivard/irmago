@@ -15,7 +15,7 @@ import (
 )
 
 // This file contains the logic and state of performing IRMA sessions, communicates
-// with IRMA API servers, and uses the calling Client to construct messages and replies
+// with IRMA API servers, and uses the calling client to construct messages and replies
 // in the IRMA protocol.
 
 // PermissionHandler is a callback for providing permission for an IRMA session

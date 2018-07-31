@@ -16,11 +16,11 @@ import (
 	"log"
 )
 
-// This file contains most methods of the Client (c.f. session.go
+// This file contains most methods of the client (c.f. session.go
 // and updates.go).
 //
 // Clients are the main entry point into this package for the user of this package.
-// The Client struct:
+// The client struct:
 // - (De)serializes credentials and keyshare server information
 // from storage, as well as logs of earlier IRMA sessions
 // - it provides access to the attributes and all related information of its credentials,
@@ -102,7 +102,7 @@ type secretKey struct {
 	Key *big.Int
 }
 
-// New creates a new Client that uses the directory
+// New creates a new client that uses the directory
 // specified by storagePath for (de)serializing itself. irmaConfigurationPath
 // is the path to a (possibly readonly) folder containing irma_configuration;
 // androidStoragePath is an optional path to the files of the old android app
@@ -209,7 +209,7 @@ func (client *Client) CredentialInfoList() irma.CredentialInfoList {
 	return list
 }
 
-// addCredential adds the specified credential to the Client, saving its signature
+// addCredential adds the specified credential to the client, saving its signature
 // imediately, and optionally cm.attributes as well.
 func (client *Client) addCredential(cred *credential, storeAttributes bool) (err error) {
 	id := irma.NewCredentialTypeIdentifier("")
@@ -408,7 +408,7 @@ func (client *Client) findCredentialSecretKey(smid irma.SchemeManagerIdentifier)
 	keyshareServers := client.keyshareServers[smid]
 	//TODO Why is there only one?
 
-	return new(big.Int).Add(client.secretkey.Key, keyshareServers.deviceKey.Key)
+	return new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key)
 }
 
 // credential returns the requested credential, or nil if we do not have it.

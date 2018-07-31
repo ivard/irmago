@@ -14,7 +14,7 @@ import (
 
 // This file contains an implementation of the client side of the keyshare protocol,
 // as well as the keyshareSessionHandler which is used to communicate with the user
-// (currently only Client).
+// (currently only client).
 
 // KeysharePinRequestor is used to asking the user for his PIN.
 type KeysharePinRequestor interface {
@@ -52,7 +52,9 @@ type keyshareServer struct {
 	PrivateKey              *paillierPrivateKey `json:"keyPair"`
 	SchemeManagerIdentifier irma.SchemeManagerIdentifier
 	token                   string
-	deviceKey               *deviceKey          `json:"deviceKey"` // For device revocation
+
+	// For device recovery
+	DeviceKey *deviceKey `json:"DeviceKey"` // For device revocation
 }
 
 type keyshareEnrollment struct {
@@ -132,7 +134,7 @@ func newKeyshareServer(
 		URL:                     url,
 		PrivateKey:              privatekey,
 		SchemeManagerIdentifier: schemeManagerIdentifier,
-		deviceKey:               &deviceKey{big.NewInt(0)}, // By default the secret key is not changed
+		DeviceKey:               &deviceKey{big.NewInt(0)}, // By default the secret key is not changed
 	}
 	_, err = rand.Read(ks.Nonce)
 	return

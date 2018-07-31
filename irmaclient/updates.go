@@ -14,7 +14,7 @@ import (
 	"github.com/privacybydesign/irmago/internal/fs"
 )
 
-// This file contains the update mechanism for Client
+// This file contains the update mechanism for client
 // as well as updates themselves.
 
 type update struct {

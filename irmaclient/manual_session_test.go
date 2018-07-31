@@ -287,6 +287,16 @@ func TestManualSessionInvalidProof(t *testing.T) {
 	test.ClearTestStorage(t)
 }
 
+func TestManualSessionRecovery(t *testing.T) {
+	client = parseStorage(t)
+
+	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
+	rp := redPacket{kss, nil, nil, nil, nil}
+	rs := recoverySession{&rp, []byte("Hallo?"), nil, nil, "", irma.NewHTTPTransport(kss.URL), &client.storage}
+	rs.verifyPinAttempt("12345")
+	rs.renewDeviceKeys()
+}
+
 func (sh *ManualSessionHandler) Success(irmaAction irma.Action, result string) {
 	switch irmaAction {
 	case irma.ActionSigning:
