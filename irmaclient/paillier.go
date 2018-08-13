@@ -7,7 +7,7 @@ import (
 	"github.com/credentials/go-go-gadget-paillier"
 )
 
-// paillierPrivateKey is an alias for paillier.PrivateKey so that we can add a custom unmarshaler to it.
+// paillierPrivateKey is an alias for paillier.Key so that we can add a custom unmarshaler to it.
 type paillierPrivateKey paillier.PrivateKey
 type paillierPublicKey paillier.PublicKey
 
