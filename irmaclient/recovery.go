@@ -9,9 +9,11 @@ import (
 	"encoding/base64"
 	"strconv"
 	"github.com/go-errors/errors"
+	"crypto/aes"
+	"crypto/cipher"
 	"golang.org/x/crypto/nacl/box"
-	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/scrypt"
+	"golang.org/x/crypto/curve25519"
 )
 
 type deviceKey struct {
@@ -41,6 +43,8 @@ type recoverySession struct {
 	backupMeta                *backupMetadata
 	recoveryServerKeyResponse *recoveryServerKeyResponse
 	bluePacketBytes           []byte
+	redPacketBytes			  []byte
+	decryptionKeyBluePacket	  [32]byte
 	sessionHandler            recoverySessionHandler
 	pin                       string
 	transport                 *irma.HTTPTransport
@@ -177,13 +181,11 @@ func (rs *recoverySession) renewDeviceKeys() {
 	//rs.storeBackup(decryptedBackup)
 }
 
-/* Does not seem necessary
-func (rp *redPacket) aesEncrypt(data []byte) (ciphertext []byte) {
-	rp.AesKey = new([32]byte)[:]
-	if _, err := io.ReadFull(rand.Reader, rp.AesKey); err != nil {
+func (rs *recoverySession) aesEncrypt(data []byte) (ciphertext []byte) {
+	if _, err := io.ReadFull(rand.Reader, rs.decryptionKeyBluePacket[:]); err != nil {
 		panic(err.Error())
 	}
-	block, _ := aes.NewCipher(rp.AesKey)
+	block, _ := aes.NewCipher(rs.decryptionKeyBluePacket[:])
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		panic(err.Error())
@@ -196,8 +198,8 @@ func (rp *redPacket) aesEncrypt(data []byte) (ciphertext []byte) {
 	return
 }
 
-func (rp *redPacket) aesDecrypt(data []byte) (plaintext []byte) {
-	block, err := aes.NewCipher(rp.AesKey)
+func (s *recoverySession) aesDecrypt(data []byte) (plaintext []byte) {
+	block, err := aes.NewCipher(rs.decryptionKeyBluePacket[:])
 	if err != nil {
 		panic(err.Error())
 	}
@@ -212,7 +214,7 @@ func (rp *redPacket) aesDecrypt(data []byte) (plaintext []byte) {
 		panic(err.Error())
 	}
 	return
-} */
+}
 
 func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte) {
 	var nonce [24]byte
@@ -315,7 +317,13 @@ func startRecovery(handler recoverySessionHandler, storage *storage) {
 		rs.VerifyPin(-1)
 		pin = rs.pin
 
-		// decryptBackup
+		resp := recoveryServerKeyResponse{}
+		rs.transport.Get("users/recovery/perform", resp)
+		rs.decryptionKeyBluePacket = resp.Key
+		rs.bluePacketBytes = rs.aesDecrypt(rs.redPacketBytes)
+		backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
+
+		// TODO: Put back back-up
 	}
 }
 
