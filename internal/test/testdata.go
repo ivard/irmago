@@ -87,6 +87,7 @@ func findTestdataFolder(t *testing.T) string {
 // ClearTestStorage removes any output from previously run tests to ensure a clean state;
 // some of the tests don't like it when there is existing state in storage.
 func ClearTestStorage(t *testing.T) {
+	fmt.Println("Clearing test")
 	path := filepath.Join(findTestdataFolder(t), "storage", "test")
 	err := os.RemoveAll(path)
 	checkError(t, err)

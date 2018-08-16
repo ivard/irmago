@@ -14,6 +14,12 @@ import (
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/crypto/curve25519"
+	"github.com/pierrre/archivefile/zip"
+	"bytes"
+	"fmt"
+	"encoding/json"
+	"io/ioutil"
+	"os"
 )
 
 type deviceKey struct {
@@ -45,10 +51,19 @@ type recoverySession struct {
 	bluePacketBytes           []byte
 	redPacketBytes			  []byte
 	decryptionKeyBluePacket	  [32]byte
-	sessionHandler            recoverySessionHandler
 	pin                       string
 	transport                 *irma.HTTPTransport
 	storage                   *storage
+}
+
+type backup struct {
+	Signatures  []byte                `json:"Signatures"`
+	SecretKey   *secretKey            `json:"SecretKey"`
+	Attributes  []*irma.AttributeList `json:"attrs"`
+	Paillier    *paillierPrivateKey   `json:"Paillier"`
+	Logs        []*LogEntry           `json:"Logs"`
+	Preferences Preferences           `json:"Preferences"`
+	Updates     []update              `json:"Updates"`
 }
 
 type recoverySessionHandler interface {
@@ -75,6 +90,9 @@ type recoveryInitResponse struct {
 type recoveryServerKeyResponse struct {
 	Key			    [32]byte `json:"serverKey"`
 }
+
+// We implement the handler for the keyshare protocol
+var _ recoverySessionHandler = (*recoverySession)(nil)
 
 // Recovery PIN uses private recovery key in the hash
 func (bmeta *backupMetadata) HashedPin(pin string) string {
@@ -133,25 +151,25 @@ func (rs *recoverySession) VerifyPin(attempts int) {
 		if success {
 			return
 		}
-		rs.sessionHandler.RecoveryError(err)
+		rs.RecoveryError(err)
 	} else {
-		rs.sessionHandler.RequestPin(attempts, PinHandler(func (proceed bool, pin string) {
+		rs.RequestPin(attempts, PinHandler(func (proceed bool, pin string) {
 		if !proceed {
-			rs.sessionHandler.RecoveryCancelled()
+			rs.RecoveryCancelled()
 			return
 		}
 		rs.pin = pin
 		success, attemptsRemaining, blocked, err := rs.verifyPinAttempt(pin)
 		if err != nil {
-			rs.sessionHandler.RecoveryError(err)
+			rs.RecoveryError(err)
 			return
 		}
 		if blocked != 0 {
-			rs.sessionHandler.RecoveryBlocked(blocked)
+			rs.RecoveryBlocked(blocked)
 			return
 		}
 		if success {
-			rs.sessionHandler.RecoveryPinOk()
+			rs.RecoveryPinOk()
 			rs.renewDeviceKeys() // TODO Wat moet er gebeuren als de PIN correct is?
 			return
 		}
@@ -199,7 +217,7 @@ func (rs *recoverySession) aesEncrypt(data []byte) (ciphertext []byte) {
 }
 
 func (s *recoverySession) aesDecrypt(data []byte) (plaintext []byte) {
-	block, err := aes.NewCipher(rs.decryptionKeyBluePacket[:])
+	block, err := aes.NewCipher(s.decryptionKeyBluePacket[:])
 	if err != nil {
 		panic(err.Error())
 	}
@@ -279,7 +297,6 @@ func initRecovery(client *Client, rh *recoverySessionHandler) {
 			},
 			recoveryServerKeyResponse: nil,
 			bluePacketBytes:           nil,
-			sessionHandler:            rh,
 			pin:                       pin,
 			transport:                 irma.NewHTTPTransport(kss.URL),
 			storage:                   &client.storage,
@@ -321,13 +338,102 @@ func startRecovery(handler recoverySessionHandler, storage *storage) {
 		rs.transport.Get("users/recovery/perform", resp)
 		rs.decryptionKeyBluePacket = resp.Key
 		rs.bluePacketBytes = rs.aesDecrypt(rs.redPacketBytes)
-		backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
+		//backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
 
 		// TODO: Put back back-up
 	}
 }
 
+func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err error){
+	sigs = make(map[string][]byte)
+	for _, sig := range needed {
+		b, err := ioutil.ReadFile(c.storage.path(sig))
+		if err != nil {
+			return nil, err
+		}
+		sigs[sig] = b
+	}
+	return
+}
+
+func (c *Client) storeSignatures (sigs map[string][]byte){
+	for file, content := range sigs {
+		if _, err := os.Stat(c.storage.path(file)); err == nil {
+			os.Remove(c.storage.path(file))
+		}
+		ioutil.WriteFile(c.storage.path(file), content, 0644)
+	}
+}
+
+func (c *Client) storageToBackup(kss *keyshareServer) (result []byte) {
+	var selected []*irma.AttributeList
+	var signatureFiles []string
+	for _, attrs := range c.attributes {
+		for _, attr := range attrs {
+			if c.keyshareServers[attr.Info().SchemeManagerID] == kss {
+				selected = append(selected, attr)
+				signatureFiles = append(signatureFiles, c.storage.signatureFilename(attr))
+			}
+		}
+	}
+	sigs, _ := c.getSignatures(signatureFiles) // TODO Add error handling
+	sigsJson, _ := json.Marshal(sigs) // TODO Add error handling
+	b := backup{
+		Signatures:  sigsJson,
+		SecretKey:   c.secretkey,
+		Attributes:  selected,
+		Paillier:    c.paillierKey(true),
+		Logs:        c.logs,
+		Preferences: c.Preferences,
+		Updates:     c.updates,
+	}
+	fmt.Println(sigsJson)
+	backup, err := json.Marshal(b)
+	if err != nil {
+		panic("Subset of Attributes could not be marshalled in JSON")
+	}
+
+	return backup
+}
+
+func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (*Client, error) {
+	b := backup{}
+	json.Unmarshal(backupFile, b)
+	sigs := make(map[string][]byte)
+	json.Unmarshal(b.Signatures, sigs)
+	c.storeSignatures(sigs)
+	c.keyshareServers[kss.SchemeManagerIdentifier] = kss
+	c.storage.StoreKeyshareServers(c.keyshareServers)
+	c.storage.StoreSecretKey(b.SecretKey)
+	c.storage.StorePreferences(b.Preferences)
+	c.storage.StorePaillierKeys(b.Paillier)
+	c.storage.StoreUpdates(b.Updates)
+	c.storage.StoreLogs(b.Logs)
+
+	// TODO store attributes
+}
+
 func parseBackup(backup *[]byte) (sessions []*recoverySession) {
 	//TODO
 	return nil
+}
+
+func (rs *recoverySession) RecoveryCancelled() {
+	fmt.Println("Recovery cancelled")
+}
+
+func (rs *recoverySession) RequestPin(remainingAttempts int, callback PinHandler) {
+	fmt.Println("Recovery PIN")
+}
+
+func (rs *recoverySession) RecoveryPinOk() {
+	fmt.Println("Recovery Pin OK")
+}
+
+func (rs *recoverySession) RecoveryBlocked(duration int) {
+	fmt.Println("Recovery blocked")
+}
+
+func (rs *recoverySession) RecoveryError(err error) {
+	fmt.Println("Recovery error")
 }

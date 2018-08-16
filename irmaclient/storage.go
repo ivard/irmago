@@ -9,7 +9,6 @@ import (
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/fs"
 	"math/big"
-	"log"
 )
 
 // This file contains the storage struct and its methods,
@@ -193,7 +192,6 @@ func (s *storage) LoadKeyshareServers() (ksses map[irma.SchemeManagerIdentifier]
 	changed := false
 	for _, kss := range ksses {
 		if kss.DeviceKey == nil {
-			log.Println("Dit zou moeten gebeuren")
 			kss.DeviceKey = &deviceKey{big.NewInt(0)}
 			changed = true
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/test"
+	"github.com/magiconair/properties/assert"
 )
 
 type ManualSessionHandler struct {
@@ -286,15 +287,30 @@ func TestManualSessionInvalidProof(t *testing.T) {
 	}
 	test.ClearTestStorage(t)
 }
-
+/*
 func TestManualSessionRecovery(t *testing.T) {
 	client = parseStorage(t)
 
 	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
-	rp := redPacket{kss, nil, nil, nil, nil}
+	rp := backupMetadata{kss, nil, nil, nil}
 	rs := recoverySession{&rp, []byte("Hallo?"), nil, nil, "", irma.NewHTTPTransport(kss.URL), &client.storage}
 	rs.verifyPinAttempt("12345")
 	rs.renewDeviceKeys()
+}
+*/
+func TestStorageToBytes(t *testing.T) {
+	fmt.Println("running TestStorageToBytes")
+	client = parseStorage(t)
+	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
+
+	key := client.secretkey
+	zipFile := client.storageToZip(kss)
+	client, err := client.zipToStorage(zipFile)
+	if err != nil {
+		t.Fail()
+	}
+
+	assert.Equal(t, key, client.secretkey)
 }
 
 func (sh *ManualSessionHandler) Success(irmaAction irma.Action, result string) {

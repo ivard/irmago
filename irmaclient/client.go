@@ -13,7 +13,6 @@ import (
 	"github.com/mhe/gabi"
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/fs"
-	"log"
 )
 
 // This file contains most methods of the client (c.f. session.go
@@ -437,7 +436,6 @@ func (client *Client) credential(id irma.CredentialTypeIdentifier, counter int) 
 			return nil, errors.New("unknown public key")
 		}
 
-		log.Println("Nu zou je het credential moeten samenstellen")
 		cred, err := newCredential(&gabi.Credential{
 			Attributes: append([]*big.Int{client.findCredentialSecretKey(attrs.Info().SchemeManagerID)}, attrs.Ints...),
 			Signature:  sig,
