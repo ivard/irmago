@@ -14,8 +14,6 @@ import (
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/crypto/curve25519"
-	"github.com/pierrre/archivefile/zip"
-	"bytes"
 	"fmt"
 	"encoding/json"
 	"io/ioutil"
@@ -57,13 +55,13 @@ type recoverySession struct {
 }
 
 type backup struct {
-	Signatures  []byte                `json:"Signatures"`
-	SecretKey   *secretKey            `json:"SecretKey"`
+	Signatures  []byte                `json:"signatures"`
+	SecretKey   *secretKey            `json:"secretKey"`
 	Attributes  []*irma.AttributeList `json:"attrs"`
-	Paillier    *paillierPrivateKey   `json:"Paillier"`
-	Logs        []*LogEntry           `json:"Logs"`
-	Preferences Preferences           `json:"Preferences"`
-	Updates     []update              `json:"Updates"`
+	Paillier    *paillierPrivateKey   `json:"paillier"`
+	Logs        []*LogEntry           `json:"logs"`
+	Preferences Preferences           `json:"preferences"`
+	Updates     []update              `json:"updates"`
 }
 
 type recoverySessionHandler interface {
@@ -387,18 +385,18 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte) {
 		Preferences: c.Preferences,
 		Updates:     c.updates,
 	}
-	fmt.Println(sigsJson)
 	backup, err := json.Marshal(b)
 	if err != nil {
 		panic("Subset of Attributes could not be marshalled in JSON")
 	}
-
 	return backup
 }
 
-func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (*Client, error) {
+func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (error) {
 	b := backup{}
-	json.Unmarshal(backupFile, b)
+	if err := json.Unmarshal(backupFile, &b); err != nil {
+		return err
+	}
 	sigs := make(map[string][]byte)
 	json.Unmarshal(b.Signatures, sigs)
 	c.storeSignatures(sigs)
@@ -410,7 +408,18 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (*Clien
 	c.storage.StoreUpdates(b.Updates)
 	c.storage.StoreLogs(b.Logs)
 
-	// TODO store attributes
+	for _, a := range b.Attributes {
+		a.MetadataAttribute = irma.MetadataFromInt(a.Ints[0], c.storage.Configuration)
+		val, ok := c.attributes[a.CredentialType().Identifier()]
+		if !ok {
+			c.attributes[a.Info().CredentialTypeID] = []*irma.AttributeList{a}
+		} else {
+			c.attributes[a.Info().CredentialTypeID] = append(val, a)
+		}
+	}
+	c.storage.StoreAttributes(c.attributes)
+	c.ParseAndroidStorage()
+	return nil
 }
 
 func parseBackup(backup *[]byte) (sessions []*recoverySession) {

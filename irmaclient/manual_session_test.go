@@ -304,8 +304,8 @@ func TestStorageToBytes(t *testing.T) {
 	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
 
 	key := client.secretkey
-	zipFile := client.storageToZip(kss)
-	client, err := client.zipToStorage(zipFile)
+	zipFile := client.storageToBackup(kss)
+	err := client.backupToStorage(zipFile, kss)
 	if err != nil {
 		t.Fail()
 	}
