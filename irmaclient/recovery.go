@@ -32,10 +32,8 @@ type backupMetadata struct {
 }
 
 type userKeyPair struct {
-	PublicEncryptionKey     [32]byte         `json:"publicRecoveryKey"`
-	privateEncryptionKey    [32]byte
-	PrivateAuthKey  		[32]byte         `json:"privateAuthKey"` // TODO: Should maybe not be included in metadata
-	PublicAuthKey     		[32]byte		 `json:"publicAuthKey"`
+	PublicKey  [32]byte `json:"publicRecoveryKey"`
+	privateKey [32]byte
 }
 
 type serverKeyPair struct {
@@ -44,10 +42,10 @@ type serverKeyPair struct {
 }
 
 type recoverySession struct {
-	backupMeta                *backupMetadata
+	BackupMeta                *backupMetadata				`json:"meta"`
 	recoveryServerKeyResponse *recoveryServerKeyResponse
-	bluePacketBytes           []byte
-	redPacketBytes			  []byte
+	BluePacketBytes           []byte						`json:"blue"`
+	RedPacketBytes			  []byte						`json:"red"`
 	decryptionKeyBluePacket	  [32]byte
 	pin                       string
 	transport                 *irma.HTTPTransport
@@ -92,7 +90,6 @@ type recoveryServerKeyResponse struct {
 // We implement the handler for the keyshare protocol
 var _ recoverySessionHandler = (*recoverySession)(nil)
 
-// Recovery PIN uses private recovery key in the hash
 func (bmeta *backupMetadata) HashedPin(pin string) string {
 	hash := sha256.Sum256(append(bmeta.RecoveryNonce[:], []byte(pin)...))
 	// We must be compatible with the old Android app here,
@@ -111,7 +108,7 @@ func (bmeta *backupMetadata) HashedPin(pin string) string {
 // If all is ok, success will be true.
 func (rs *recoverySession) verifyPinAttempt(pin string) (
 	success bool, tries int, blocked int, err error) {
-	pinmsg := keysharePinMessage{Username: rs.backupMeta.KeyshareServer.Username, Pin: rs.backupMeta.HashedPin(pin)}
+	pinmsg := keysharePinMessage{Username: rs.BackupMeta.KeyshareServer.Username, Pin: rs.BackupMeta.HashedPin(pin)}
 	pinresult := &keysharePinStatus{}
 	err = rs.transport.Post("users/recovery/verify-pin", pinresult, pinmsg)
 	if err != nil {
@@ -120,9 +117,9 @@ func (rs *recoverySession) verifyPinAttempt(pin string) (
 
 	switch pinresult.Status {
 	case kssPinSuccess:
-		rs.backupMeta.KeyshareServer.token = pinresult.Message
-		rs.transport.SetHeader(kssUsernameHeader, rs.backupMeta.KeyshareServer.Username)
-		rs.transport.SetHeader(kssAuthHeader, rs.backupMeta.KeyshareServer.token)
+		rs.BackupMeta.KeyshareServer.token = pinresult.Message
+		rs.transport.SetHeader(kssUsernameHeader, rs.BackupMeta.KeyshareServer.Username)
+		rs.transport.SetHeader(kssAuthHeader, rs.BackupMeta.KeyshareServer.token)
 	case kssPinFailure:
 		tries, err = strconv.Atoi(pinresult.Message)
 		return
@@ -141,8 +138,8 @@ func (rs *recoverySession) verifyPinAttempt(pin string) (
 // Ask for a pin, repeatedly if necessary, and either continue the keyshare protocol
 // with authorization, or stop the keyshare protocol and inform of failure.
 func (rs *recoverySession) VerifyPin(attempts int) {
-	if rs.backupMeta.RecoveryNonce == nil {
-		rs.backupMeta.RecoveryNonce = rs.backupMeta.KeyshareServer.Nonce
+	if rs.BackupMeta.RecoveryNonce == nil {
+		rs.BackupMeta.RecoveryNonce = rs.BackupMeta.KeyshareServer.Nonce
 	}
 	if rs.pin != "" {
 		success, _, _, err := rs.verifyPinAttempt(rs.pin)
@@ -197,7 +194,7 @@ func (rs *recoverySession) renewDeviceKeys() {
 	//rs.storeBackup(decryptedBackup)
 }
 
-func (rs *recoverySession) aesEncrypt(data []byte) (ciphertext []byte) {
+func (rs *recoverySession) serverEncrypt(data []byte) () {
 	if _, err := io.ReadFull(rand.Reader, rs.decryptionKeyBluePacket[:]); err != nil {
 		panic(err.Error())
 	}
@@ -210,7 +207,8 @@ func (rs *recoverySession) aesEncrypt(data []byte) (ciphertext []byte) {
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		panic(err.Error())
 	}
-	ciphertext = gcm.Seal(nonce, nonce, data, nil)
+	rs.BluePacketBytes = gcm.Seal(nonce, nonce, data, nil)
+	rs.RedPacketBytes = rs.BackupMeta.curveEncrypt(rs.decryptionKeyBluePacket[:], true) // TODO needs identifier user in packet
 	return
 }
 
@@ -232,22 +230,34 @@ func (s *recoverySession) aesDecrypt(data []byte) (plaintext []byte) {
 	return
 }
 
-func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte) {
+func (bmeta *backupMetadata) curveEncrypt (plain []byte, server bool) (ciphertext []byte) {
+	dummyAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
+
+	// Server boolean indicates whether the key of the user must be used, otherwise only the user keys are used
 	var nonce [24]byte
 	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		panic(err)
 	}
 
-	msg := []byte("Alas, poor Yorick! I knew him, Horatio")
+	var enc *[32]byte
+	if server {
+		enc = &bmeta.ServerKeyPair.PublicKey
+	} else {
+		enc = &bmeta.UserKeyPair.PublicKey
+	}
 	// This encrypts msg and appends the result to the nonce.
-	ciphertext = box.Seal(nonce[:], msg, &nonce, &bmeta.UserKeyPair.PublicEncryptionKey, &bmeta.UserKeyPair.PrivateAuthKey)
+	ciphertext = box.Seal(nonce[:], plain, &nonce, enc, dummyAuthKey)
 	return
 }
 
 func (bmeta *backupMetadata) curveDecrypt (ciphertext []byte) (plain []byte) {
+	dummyPrivAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
+	dummyPubAuthKey := new([32]byte)
+	curve25519.ScalarBaseMult(dummyPubAuthKey, dummyPrivAuthKey)
+
 	var decryptNonce [24]byte
 	copy(decryptNonce[:], ciphertext[:24])
-	plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, &bmeta.UserKeyPair.PublicAuthKey, &bmeta.UserKeyPair.privateEncryptionKey)
+	plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPrivAuthKey, &bmeta.UserKeyPair.privateKey)
 	if !ok {
 		panic("decryption error")
 	}
@@ -257,14 +267,12 @@ func (bmeta *backupMetadata) curveDecrypt (ciphertext []byte) (plain []byte) {
 func genKeyPair(salt []byte, phrase []byte) (pair *userKeyPair, err error) {
 	//pub, priv, err := box.GenerateKey(rand.Reader) // How to do it normally
 	err = nil
-	key, err := scrypt.Key(phrase, salt, 1<<16, 16, 4, 64)
+	key, err := scrypt.Key(phrase, salt, 1<<16, 16, 4, 32)
 	if err != nil {
 		return
 	}
-	copy(pair.privateEncryptionKey[:], key[:32])
-	copy(pair.PrivateAuthKey[:], key[32:64])
-	curve25519.ScalarBaseMult(&pair.PublicEncryptionKey, &pair.privateEncryptionKey)
-	curve25519.ScalarBaseMult(&pair.PublicAuthKey, &pair.PrivateAuthKey)
+	copy(pair.privateKey[:], key[:32])
+	curve25519.ScalarBaseMult(&pair.PublicKey, &pair.privateKey)
 	return
 }
 
@@ -287,14 +295,14 @@ func initRecovery(client *Client, rh *recoverySessionHandler) {
 		}
 
 		session := recoverySession{
-			backupMeta:            &backupMetadata{
+			BackupMeta:            &backupMetadata{
 				KeyshareServer: kss,
 				RecoveryNonce:  nil,
 				UserKeyPair:    pair,
 				ServerKeyPair:  nil,
 			},
 			recoveryServerKeyResponse: nil,
-			bluePacketBytes:           nil,
+			BluePacketBytes:           nil,
 			pin:                       pin,
 			transport:                 irma.NewHTTPTransport(kss.URL),
 			storage:                   &client.storage,
@@ -303,10 +311,10 @@ func initRecovery(client *Client, rh *recoverySessionHandler) {
 		session.VerifyPin(-1)
 		pin = session.pin
 
-		session.backupMeta.RecoveryNonce = salt[:]
+		session.BackupMeta.RecoveryNonce = salt[:]
 		status := recoveryInitResponse{}
 		err = session.transport.Post("users/recovery/init", &status, recoveryInitRequest{
-			HashedPin: session.backupMeta.HashedPin(pin),
+			HashedPin: session.BackupMeta.HashedPin(pin),
 		})
 		if err != nil {
 			panic("Unexpected error occured at recovery server")
@@ -314,32 +322,57 @@ func initRecovery(client *Client, rh *recoverySessionHandler) {
 		if status.Status != "completed" {
 			panic("Server error: " + status.Message)
 		}
-		metas = append(metas, session.backupMeta)
+		metas = append(metas, session.BackupMeta)
 	}
 	client.storage.StoreRecoveryMetas(metas)
 	return
 }
 
+func (client *Client) makeBackup() (backup []byte, err error) {
+	backups := make(map[backupMetadata]recoverySession)
+	metas, err := client.storage.LoadRecoveryMeta()
+	if err != nil {
+
+	}
+	for _, meta := range metas {
+		b := client.storageToBackup(meta.KeyshareServer)
+		b = meta.curveEncrypt(b, false)
+		rs := recoverySession{
+			BackupMeta:                meta,
+			recoveryServerKeyResponse: nil,
+			BluePacketBytes:           nil,
+			RedPacketBytes:            nil,
+			decryptionKeyBluePacket:   nil,
+			pin:                       "",
+			transport:                 nil,
+			storage:                   nil,
+		}
+		rs.serverEncrypt(b)
+		backups[*meta] = rs
+	}
+	return json.Marshal(backups[0]) // For now only one kss
+}
+
 func startRecovery(handler recoverySessionHandler, storage *storage) {
 	pin := ""
-	backup := new([]byte) // TODO Load backup
-	sessions := parseBackup(backup)
-
-	for _, rs := range sessions {
-		rs.transport = irma.NewHTTPTransport(rs.backupMeta.KeyshareServer.URL)
+	var rs recoverySession
+	storage.load(rs, "backup")
+	// TODO Add support multiple keyshare servers
+	//for _, rs := range sessions {
+		rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
 		rs.pin = pin
 
-		rs.VerifyPin(-1)
+		//rs.VerifyPin(-1) Skip PIN check for now
 		pin = rs.pin
 
 		resp := recoveryServerKeyResponse{}
 		rs.transport.Get("users/recovery/perform", resp)
-		rs.decryptionKeyBluePacket = resp.Key
-		rs.bluePacketBytes = rs.aesDecrypt(rs.redPacketBytes)
+		//rs.decryptionKeyBluePacket = resp.Key
+		//rs.BluePacketBytes = rs.aesDecrypt(rs.RedPacketBytes)
 		//backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
 
-		// TODO: Put back back-up
-	}
+		rs.storeBackup(rs.BluePacketBytes)
+	//}
 }
 
 func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err error){
@@ -419,11 +452,6 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (error)
 	}
 	c.storage.StoreAttributes(c.attributes)
 	c.ParseAndroidStorage()
-	return nil
-}
-
-func parseBackup(backup *[]byte) (sessions []*recoverySession) {
-	//TODO
 	return nil
 }
 
