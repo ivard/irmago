@@ -212,8 +212,8 @@ func (rs *recoverySession) serverEncrypt(data []byte) () {
 	return
 }
 
-func (s *recoverySession) aesDecrypt(data []byte) (plaintext []byte) {
-	block, err := aes.NewCipher(s.decryptionKeyBluePacket[:])
+func (rs *recoverySession) aesDecrypt(data []byte) (plaintext []byte) {
+	block, err := aes.NewCipher(rs.decryptionKeyBluePacket[:])
 	if err != nil {
 		panic(err.Error())
 	}
@@ -276,7 +276,7 @@ func genKeyPair(salt []byte, phrase []byte) (pair *userKeyPair, err error) {
 	return
 }
 
-func initRecovery(client *Client, rh *recoverySessionHandler) {
+func initRecovery(client *Client) {
 	var phrase [16]byte
 	if _, err := io.ReadFull(rand.Reader, phrase[:]); err != nil {
 		panic("Not enough randomness")
@@ -332,9 +332,10 @@ func (client *Client) makeBackup() (backup []byte, err error) {
 	backups := make(map[backupMetadata]recoverySession)
 	metas, err := client.storage.LoadRecoveryMeta()
 	if err != nil {
-
+		panic("Backup information could not be loaded")
 	}
-	for _, meta := range metas {
+	var meta *backupMetadata // This kss is back-upped
+	for _, meta = range metas {
 		b := client.storageToBackup(meta.KeyshareServer)
 		b = meta.curveEncrypt(b, false)
 		rs := recoverySession{
@@ -350,7 +351,7 @@ func (client *Client) makeBackup() (backup []byte, err error) {
 		rs.serverEncrypt(b)
 		backups[*meta] = rs
 	}
-	return json.Marshal(backups[0]) // For now only one kss
+	return json.Marshal(backups[*meta]) // For now only one kss
 }
 
 func startRecovery(handler recoverySessionHandler, storage *storage) {
