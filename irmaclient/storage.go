@@ -30,7 +30,7 @@ const (
 	logsFile        = "logs"
 	preferencesFile = "preferences"
 	signaturesDir   = "sigs"
-	recoveryMeta	= "recoveryMeta"
+	recoveryMetas   = "recoveryMetas"
 )
 
 func (s *storage) path(p string) string {
@@ -121,8 +121,8 @@ func (s *storage) StoreUpdates(updates []update) (err error) {
 	return s.store(updates, updatesFile)
 }
 
-func (s *storage) StoreRecoveryMetas(metadatas []*backupMetadata) (err error){
-	return s.store(metadatas, recoveryMeta)
+func (s *storage) StoreRecoveryMetas(metadatas []backupMetadata) (err error){
+	return s.store(metadatas, recoveryMetas)
 }
 
 func (s *storage) LoadSignature(attrs *irma.AttributeList) (signature *gabi.CLSignature, err error) {
@@ -235,6 +235,6 @@ func (s *storage) LoadPreferences() (Preferences, error) {
 	return config, s.load(&config, preferencesFile)
 }
 
-func (s *storage) LoadRecoveryMeta() (metas []*backupMetadata, err error) {
-	return metas, s.load(&metas, preferencesFile)
+func (s *storage) LoadRecoveryMeta() (metas []backupMetadata, err error) {
+	return metas, s.load(&metas, recoveryMetas)
 }

@@ -22,6 +22,9 @@ type ManualSessionHandler struct {
 	sigVerifyRequest  *irma.SignatureRequest // Request used to verify signature
 }
 
+// We implement the handler for the recovery protocol
+var _ recoverySessionHandler = (*ManualSessionHandler)(nil)
+
 var client *Client
 
 // Issue BSN credential using sessionHelper
@@ -287,17 +290,17 @@ func TestManualSessionInvalidProof(t *testing.T) {
 	}
 	test.ClearTestStorage(t)
 }
-/*
-func TestManualSessionRecovery(t *testing.T) {
-	client = parseStorage(t)
 
-	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
-	rp := backupMetadata{kss, nil, nil, nil}
-	rs := recoverySession{&rp, []byte("Hallo?"), nil, nil, "", irma.NewHTTPTransport(kss.URL), &client.storage}
-	rs.verifyPinAttempt("12345")
-	rs.renewDeviceKeys()
+func TestManualSessionRecovery(t *testing.T) {
+	request := "{\"nonce\": 42, \"context\": 1337, \"message\":\"I owe you everything\",\"content\":[{\"label\":\"Student number (RU)\",\"attributes\":[\"irma-demo.RU.studentCard.studentID\"]}]}"
+	ms := createManualSessionHandler(request, request, t)
+
+	client = parseStorage(t)
+	client.InitRecovery(&ms)
+	client.MakeBackup(&ms)
+	client.storage.StartRecovery(&ms)
 }
-*/
+
 func TestStorageToBytes(t *testing.T) {
 	fmt.Println("running TestStorageToBytes")
 	client = parseStorage(t)
@@ -348,6 +351,12 @@ func (sh *ManualSessionHandler) StatusUpdate(irmaAction irma.Action, status irma
 func (sh *ManualSessionHandler) RequestPin(remainingAttempts int, ph PinHandler) {
 	ph(true, "12345")
 }
+func (sh *ManualSessionHandler) RequestPhrase(ph PhraseHandler) {
+
+}
+func (sh *ManualSessionHandler) ShowPhrase(phrase []string) {
+
+}
 func (sh *ManualSessionHandler) RequestSignaturePermission(request irma.SignatureRequest, requesterName string, ph PermissionHandler) {
 	var attributes []*irma.AttributeIdentifier
 	for _, cand := range request.Candidates {
@@ -358,6 +367,10 @@ func (sh *ManualSessionHandler) RequestSignaturePermission(request irma.Signatur
 }
 func (sh *ManualSessionHandler) RequestIssuancePermission(request irma.IssuanceRequest, issuerName string, ph PermissionHandler) {
 	ph(true, nil)
+}
+
+func (sh *ManualSessionHandler) RecoveryPinOk() {
+
 }
 
 // These handlers should not be called, fail test if they are called
@@ -388,4 +401,15 @@ func (sh *ManualSessionHandler) KeyshareEnrollmentMissing(manager irma.SchemeMan
 }
 func (sh *ManualSessionHandler) KeyshareEnrollmentDeleted(manager irma.SchemeManagerIdentifier) {
 	sh.errorChannel <- &irma.SessionError{Err: errors.Errorf("Keyshare enrollment deleted for %s", manager.String())}
+}
+func (sh *ManualSessionHandler) RecoveryCancelled() {
+	sh.errorChannel <- &irma.SessionError{Err: errors.New("RecoveryCancelled")}
+}
+
+func (sh *ManualSessionHandler) RecoveryBlocked(duration int) {
+	sh.errorChannel <- &irma.SessionError{Err: errors.New("RecoveryBlocked")}
+}
+
+func (sh *ManualSessionHandler) RecoveryError(err error) {
+	sh.errorChannel <- &irma.SessionError{Err: errors.New("RecoveryError")}
 }
