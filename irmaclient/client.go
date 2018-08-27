@@ -13,6 +13,7 @@ import (
 	"github.com/mhe/gabi"
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/fs"
+	"log"
 )
 
 // This file contains most methods of the client (c.f. session.go
@@ -407,8 +408,8 @@ func (client *Client) findCredentialSecretKey(smid irma.SchemeManagerIdentifier)
 	keyshareServers := client.keyshareServers[smid]
 	//TODO Why is there only one?
 
-	//TODO is mod 255 goed?
-	//return new(big.Int).Mod(new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key), big.NewInt(256))
+	log.Println(client.secretkey.Key)
+	log.Println(keyshareServers.DeviceKey.Key)
 	return new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key)
 }
 

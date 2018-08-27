@@ -292,7 +292,7 @@ func TestManualSessionInvalidProof(t *testing.T) {
 }
 
 func TestManualSessionRecovery(t *testing.T) {
-	request := "{\"nonce\": 42, \"context\": 1337, \"message\":\"I owe you everything\",\"content\":[{\"label\":\"Student number (RU)\",\"attributes\":[\"irma-demo.RU.studentCard.studentID\"]}]}"
+	request := "{\"nonce\": 0, \"context\": 0, \"message\":\"I owe you everything\",\"content\":[{\"label\":\"Student number (RU)\",\"attributes\":[\"test.test.mijnirma.email\"]}]}"
 	ms := createManualSessionHandler(request, request, t)
 
 	client = parseStorage(t)
@@ -301,6 +301,17 @@ func TestManualSessionRecovery(t *testing.T) {
 	client.storage.StartRecovery(&ms)
 
 	client.NewManualSession(request, &ms)
+
+	if err := <-ms.errorChannel; err != nil {
+		test.ClearTestStorage(t)
+		t.Fatal(*err)
+	}
+
+	// No errors, obtain proof result from channel
+	if result := <-ms.resultChannel; result.ProofStatus != irma.VALID {
+		t.Logf("Invalid proof result: %v Expected: %v", result.ProofStatus, irma.VALID)
+		t.Fail()
+	}
 
 	test.ClearTestStorage(t)
 }

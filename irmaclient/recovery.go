@@ -18,7 +18,6 @@ import (
     "io/ioutil"
     "os"
     "github.com/mhe/gabi"
-	"log"
 )
 
 type deviceKey struct {
@@ -187,13 +186,20 @@ func (rs *recoverySession) storeBackup(bluePacket []byte) {
 
 func (rs *recoverySession) renewDeviceKeys() (err error) {
     delta, err := gabi.RandomBigInt(128)
-	log.Println(delta)
 	if err != nil {
         return
     }
     rr := recoveryRequest{delta}
     rs.recoveryServerKeyResponse = &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", rs.recoveryServerKeyResponse, rr)
+    rs.BackupMeta.KeyshareServer.DeviceKey.Key = delta
+    m, err := rs.storage.LoadKeyshareServers()
+    if err != nil{
+        return err
+    }
+    m[rs.BackupMeta.KeyshareServer.SchemeManagerIdentifier] = rs.BackupMeta.KeyshareServer
+    rs.storage.StoreKeyshareServers(m)
+
     return nil
 
     //greenPacket := rs.RedPacket.aesDecrypt(rs.bluePacketBytes)
@@ -351,7 +357,7 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
         return
     }
     for _, meta := range metas {
-        //b := client.storageToBackup(meta.KeyshareServer) TODO: enable encryption
+        b := client.storageToBackup(meta.KeyshareServer)
         //b = meta.curveEncrypt(b, false)
         rs := recoverySession{
             BackupMeta:                &meta,
@@ -359,33 +365,33 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
             handler:				   h,
         }
         //rs.serverEncrypt(b)
-        rs.BluePacketBytes, _ = json.Marshal(rs)
+        rs.BluePacketBytes = b
         backups = append(backups, &rs)
     }
     client.storage.store(*backups[0], "backup")
     return nil
 }
 
-func (s *storage) StartRecovery(handler recoverySessionHandler) {
+func (c *Client) StartRecovery(handler recoverySessionHandler) {
     pin := ""
     var rs recoverySession
-    s.load(&rs, "backup")
+    c.storage.load(&rs, "backup")
     // TODO: Add support multiple keyshare servers
     //for _, rs := range sessions {
         rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
-        rs.storage = s
+        rs.storage = &c.storage
         rs.handler = handler
         rs.pin = pin
 
         rs.VerifyPin(-1, true)
         pin = rs.pin
         rs.renewDeviceKeys()
+        c.backupToStorage(rs.BluePacketBytes, rs.BackupMeta.KeyshareServer)
 
         //rs.decryptionKeyBluePacket = resp.Key
         //rs.BluePacketBytes = rs.aesDecrypt(rs.RedPacketBytes)
         //backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
 
-        rs.storeBackup(rs.BluePacketBytes)
     //}
 }
 
@@ -415,13 +421,17 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte) {
     var signatureFiles []string
     for _, attrs := range c.attributes {
         for _, attr := range attrs {
-            if c.keyshareServers[attr.Info().SchemeManagerID] == kss {
+            if attr.Info().SchemeManagerID == kss.SchemeManagerIdentifier { // Assumption: one kss per scheme
+                // Skip attributes that do not belong to keyshareserver kss
                 selected = append(selected, attr)
                 signatureFiles = append(signatureFiles, c.storage.signatureFilename(attr))
             }
         }
     }
-    sigs, _ := c.getSignatures(signatureFiles) // TODO Add error handling
+    sigs, err := c.getSignatures(signatureFiles) // TODO Add error handling
+    if err != nil {
+        panic("Signatures could not be converted")
+    }
     sigsJson, _ := json.Marshal(sigs) // TODO Add error handling
     b := backup{
         Signatures:  sigsJson,
