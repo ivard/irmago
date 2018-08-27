@@ -17,6 +17,7 @@ import (
     "encoding/json"
     "io/ioutil"
     "os"
+    "github.com/mhe/gabi"
 	"log"
 )
 
@@ -76,7 +77,7 @@ type recoverySessionHandler interface {
 type PhraseHandler func(proceed bool, phrase []string)
 
 type recoveryRequest struct {
-    Delta           []byte			`json:"delta"`
+    Delta           *big.Int			`json:"delta"`
 }
 
 type recoveryInitRequest struct {
@@ -184,12 +185,16 @@ func (rs *recoverySession) storeBackup(bluePacket []byte) {
     // TODO Implement
 }
 
-func (rs *recoverySession) renewDeviceKeys() {
-    deltaBytes := new([32]byte)
-    io.ReadFull(rand.Reader, deltaBytes[:])
-    rr := recoveryRequest{deltaBytes[:]}
+func (rs *recoverySession) renewDeviceKeys() (err error) {
+    delta, err := gabi.RandomBigInt(128)
+	log.Println(delta)
+	if err != nil {
+        return
+    }
+    rr := recoveryRequest{delta}
     rs.recoveryServerKeyResponse = &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", rs.recoveryServerKeyResponse, rr)
+    return nil
 
     //greenPacket := rs.RedPacket.aesDecrypt(rs.bluePacketBytes)
     //decryptedBackup := rs.RedPacket.curveDecrypt(greenPacket)
@@ -332,7 +337,6 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         }
         metas = append(metas, *rs.BackupMeta)
     }
-    log.Println(metas)
     err := client.storage.StoreRecoveryMetas(metas)
     if err != nil {
     	panic("Backup could not be stored")
@@ -346,7 +350,6 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
     if err != nil {
         return
     }
-    log.Println(metas)
     for _, meta := range metas {
         //b := client.storageToBackup(meta.KeyshareServer) TODO: enable encryption
         //b = meta.curveEncrypt(b, false)
@@ -367,7 +370,6 @@ func (s *storage) StartRecovery(handler recoverySessionHandler) {
     pin := ""
     var rs recoverySession
     s.load(&rs, "backup")
-    log.Println(rs)
     // TODO: Add support multiple keyshare servers
     //for _, rs := range sessions {
         rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)

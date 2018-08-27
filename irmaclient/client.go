@@ -400,13 +400,15 @@ func (client *Client) credentialByID(id irma.CredentialIdentifier) (*credential,
 // Adapts secret key with the right delta when the scheme managers keyshare has been changed
 func (client *Client) findCredentialSecretKey(smid irma.SchemeManagerIdentifier) (key *big.Int) {
 	//Scheme managers without keyshare server use the direct secretKey
-	if !client.Configuration.SchemeManagers[smid].Distributed(){
+	if !client.Configuration.SchemeManagers[smid].Distributed() {
 		return client.secretkey.Key
 	}
 
 	keyshareServers := client.keyshareServers[smid]
 	//TODO Why is there only one?
 
+	//TODO is mod 255 goed?
+	//return new(big.Int).Mod(new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key), big.NewInt(256))
 	return new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key)
 }
 

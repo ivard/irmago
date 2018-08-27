@@ -299,6 +299,10 @@ func TestManualSessionRecovery(t *testing.T) {
 	client.InitRecovery(&ms)
 	client.MakeBackup(&ms)
 	client.storage.StartRecovery(&ms)
+
+	client.NewManualSession(request, &ms)
+
+	test.ClearTestStorage(t)
 }
 
 func TestStorageToBytes(t *testing.T) {
