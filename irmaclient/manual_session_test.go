@@ -301,7 +301,7 @@ func TestManualSessionRecovery(t *testing.T) {
 	client.InitRecovery(&ms)
 	client.MakeBackup(&ms)
 
-	// Code to delete all data excepting the backup
+	// Code to delete all data except for the backup
 	fs.Copy(client.storage.path("backup"), "/tmp/backup")
 	test.ClearTestStorage(t)
 	os.Mkdir(client.storage.storagePath, 0744)

@@ -18,6 +18,8 @@ import (
     "io/ioutil"
     "os"
     "github.com/mhe/gabi"
+    "github.com/privacybydesign/irmago/internal/fs"
+    "log"
 )
 
 type deviceKey struct {
@@ -271,10 +273,11 @@ func (bmeta *backupMetadata) curveDecrypt (ciphertext []byte) (plain []byte) {
     dummyPrivAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
     dummyPubAuthKey := new([32]byte)
     curve25519.ScalarBaseMult(dummyPubAuthKey, dummyPrivAuthKey)
+    log.Println(dummyPrivAuthKey)
 
     var decryptNonce [24]byte
     copy(decryptNonce[:], ciphertext[:24])
-    plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPrivAuthKey, &bmeta.UserKeyPair.privateKey)
+    plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPubAuthKey, &bmeta.UserKeyPair.privateKey)
     if !ok {
         panic("decryption error")
     }
@@ -327,6 +330,10 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
             handler:				   h,
         }
 
+        // FOR DEBUG PURPOSES, TODO delete in production
+        fs.SaveFile("/tmp/recoveryPrivateKey", rs.BackupMeta.UserKeyPair.privateKey[:])
+        // END DEBUG
+
         rs.VerifyPin(-1, false)
         pin = rs.pin
 
@@ -358,12 +365,18 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
     }
     for _, meta := range metas {
         b := client.storageToBackup(meta.KeyshareServer)
-        //b = meta.curveEncrypt(b, false)
+
+        x := meta.curveEncrypt([]byte("hallo"), false)
+        log.Println(meta.curveDecrypt(x))
+
+        b = meta.curveEncrypt(b, false)
+        b = meta.curveDecrypt(b)
         rs := recoverySession{
             BackupMeta:                &meta,
             pin:                       "",
             handler:				   h,
         }
+        log.Println(b)
         //rs.serverEncrypt(b)
         rs.BluePacketBytes = b
         backups = append(backups, &rs)
@@ -376,6 +389,11 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
     pin := ""
     var rs recoverySession
     c.storage.load(&rs, "backup")
+
+    // Key in file for now
+    key, _ := ioutil.ReadFile("/tmp/recoveryPrivateKey")
+    copy(rs.BackupMeta.UserKeyPair.privateKey[:], key)
+
     // TODO: Add support multiple keyshare servers
     //for _, rs := range sessions {
         rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
@@ -386,7 +404,8 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
         rs.VerifyPin(-1, true)
         pin = rs.pin
         rs.renewDeviceKeys()
-        c.backupToStorage(rs.BluePacketBytes, rs.BackupMeta.KeyshareServer)
+        backup := rs.BackupMeta.curveDecrypt(rs.BluePacketBytes)
+        c.backupToStorage(backup, rs.BackupMeta.KeyshareServer)
 
         //rs.decryptionKeyBluePacket = resp.Key
         //rs.BluePacketBytes = rs.aesDecrypt(rs.RedPacketBytes)
