@@ -298,7 +298,7 @@ func TestManualSessionRecovery(t *testing.T) {
 	client = parseStorage(t)
 	client.InitRecovery(&ms)
 	client.MakeBackup(&ms)
-	client.storage.StartRecovery(&ms)
+	client.StartRecovery(&ms)
 
 	client.NewManualSession(request, &ms)
 

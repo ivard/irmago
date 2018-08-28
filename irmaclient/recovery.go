@@ -76,7 +76,7 @@ type recoverySessionHandler interface {
 type PhraseHandler func(proceed bool, phrase []string)
 
 type recoveryRequest struct {
-    Delta           *big.Int			`json:"delta"`
+    Delta           string			`json:"delta"`
 }
 
 type recoveryInitRequest struct {
@@ -189,7 +189,7 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
 	if err != nil {
         return
     }
-    rr := recoveryRequest{delta}
+    rr := recoveryRequest{delta.String()}
     rs.recoveryServerKeyResponse = &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", rs.recoveryServerKeyResponse, rr)
     rs.BackupMeta.KeyshareServer.DeviceKey.Key = delta
