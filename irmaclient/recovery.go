@@ -398,6 +398,7 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
 func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err error){
     sigs = make(map[string][]byte)
     for _, sig := range needed {
+    	// Only include signatures as specified in needed
         b, err := ioutil.ReadFile(c.storage.path(sig))
         if err != nil {
             return nil, err
@@ -408,6 +409,7 @@ func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err err
 }
 
 func (c *Client) storeSignatures (sigs map[string][]byte){
+	os.Mkdir(c.storage.path("sigs"), 0755)
     for file, content := range sigs {
         if _, err := os.Stat(c.storage.path(file)); err == nil {
             os.Remove(c.storage.path(file))
@@ -449,13 +451,16 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte) {
     return backup
 }
 
-func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (error) {
+func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err error) {
     b := backup{}
     if err := json.Unmarshal(backupFile, &b); err != nil {
         return err
     }
     sigs := make(map[string][]byte)
-    json.Unmarshal(b.Signatures, sigs)
+    err = json.Unmarshal(b.Signatures, &sigs)
+    if err != nil {
+    	return err
+	}
     c.storeSignatures(sigs)
     c.keyshareServers[kss.SchemeManagerIdentifier] = kss
     c.storage.StoreKeyshareServers(c.keyshareServers)
@@ -475,6 +480,12 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (error)
         }
     }
     c.storage.StoreAttributes(c.attributes)
-    c.ParseAndroidStorage()
-    return nil
+
+    c, err = New(
+		c.storage.storagePath,
+		c.irmaConfigurationPath,
+		c.androidStoragePath,
+		c.handler,
+	)
+    return err
 }

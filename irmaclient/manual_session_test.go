@@ -10,6 +10,8 @@ import (
 	"github.com/privacybydesign/irmago"
 	"github.com/privacybydesign/irmago/internal/test"
 	"github.com/magiconair/properties/assert"
+	"github.com/privacybydesign/irmago/internal/fs"
+	"os"
 )
 
 type ManualSessionHandler struct {
@@ -298,8 +300,15 @@ func TestManualSessionRecovery(t *testing.T) {
 	client = parseStorage(t)
 	client.InitRecovery(&ms)
 	client.MakeBackup(&ms)
-	client.StartRecovery(&ms)
 
+	// Code to delete all data excepting the backup
+	fs.Copy(client.storage.path("backup"), "/tmp/backup")
+	test.ClearTestStorage(t)
+	os.Mkdir(client.storage.storagePath, 0744)
+	fs.Copy("/tmp/backup", client.storage.path("backup"))
+	os.Remove("/tmp/backup")
+
+	client.StartRecovery(&ms)
 	client.NewManualSession(request, &ms)
 
 	if err := <-ms.errorChannel; err != nil {
