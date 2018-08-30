@@ -54,7 +54,7 @@ type keyshareServer struct {
 	token                   string
 
 	// For device recovery
-	DeviceKey *deviceKey `json:"DeviceKey"` // For device revocation
+	DeviceKey *deviceKey `json:"deviceKey,omitempty"` // For device revocation
 }
 
 type keyshareEnrollment struct {

@@ -18,6 +18,7 @@ import (
     "io/ioutil"
     "os"
     "github.com/mhe/gabi"
+    "encoding/hex"
     "github.com/privacybydesign/irmago/internal/fs"
     "log"
 )
@@ -194,7 +195,7 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
     rr := recoveryRequest{delta.String()}
     rs.recoveryServerKeyResponse = &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", rs.recoveryServerKeyResponse, rr)
-    rs.BackupMeta.KeyshareServer.DeviceKey.Key = delta
+    rs.BackupMeta.KeyshareServer.DeviceKey = &deviceKey{delta}
     m, err := rs.storage.LoadKeyshareServers()
     if err != nil{
         return err
@@ -264,20 +265,21 @@ func (bmeta *backupMetadata) curveEncrypt (plain []byte, server bool) (ciphertex
     } else {
         enc = &bmeta.UserKeyPair.PublicKey
     }
+
     // This encrypts msg and appends the result to the nonce.
     ciphertext = box.Seal(nonce[:], plain, &nonce, enc, dummyAuthKey)
     return
 }
 
-func (bmeta *backupMetadata) curveDecrypt (ciphertext []byte) (plain []byte) {
+func curveDecrypt (ciphertext []byte, privateKey [32]byte) (plain []byte) {
     dummyPrivAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
     dummyPubAuthKey := new([32]byte)
     curve25519.ScalarBaseMult(dummyPubAuthKey, dummyPrivAuthKey)
-    log.Println(dummyPrivAuthKey)
 
     var decryptNonce [24]byte
     copy(decryptNonce[:], ciphertext[:24])
-    plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPubAuthKey, &bmeta.UserKeyPair.privateKey)
+
+    plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPubAuthKey, &privateKey)
     if !ok {
         panic("decryption error")
     }
@@ -315,9 +317,12 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
             panic(err)
         }
 
+        kssStore := *kss
+        kssStore.DeviceKey = nil
+        log.Println(kss.DeviceKey)
         rs := recoverySession{
             BackupMeta:            &backupMetadata{
-                KeyshareServer: kss,
+                KeyshareServer: &kssStore,
                 RecoveryNonce:  nil,
                 UserKeyPair:    pair,
                 ServerKeyPair:  nil,
@@ -331,7 +336,7 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         }
 
         // FOR DEBUG PURPOSES, TODO delete in production
-        fs.SaveFile("/tmp/recoveryPrivateKey", rs.BackupMeta.UserKeyPair.privateKey[:])
+        fs.SaveFile("/tmp/recoveryPrivateKey", []byte(hex.EncodeToString(rs.BackupMeta.UserKeyPair.privateKey[:])))
         // END DEBUG
 
         rs.VerifyPin(-1, false)
@@ -358,7 +363,7 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
 }
 
 func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
-    var backups []*recoverySession
+    var backups []recoverySession
     metas, err := client.storage.LoadRecoveryMeta()
     if err != nil {
         return
@@ -366,36 +371,46 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
     for _, meta := range metas {
         b := client.storageToBackup(meta.KeyshareServer)
 
-        x := meta.curveEncrypt([]byte("hallo"), false)
-        log.Println(meta.curveDecrypt(x))
-
-        b = meta.curveEncrypt(b, false)
-        b = meta.curveDecrypt(b)
+        // Key in file for now
+        var keyBytes []byte
+        keyBytes, err = ioutil.ReadFile("/tmp/recoveryPrivateKey")
+        hex.Decode(meta.UserKeyPair.privateKey[:], keyBytes)
         rs := recoverySession{
             BackupMeta:                &meta,
             pin:                       "",
             handler:				   h,
         }
-        log.Println(b)
+
         //rs.serverEncrypt(b)
         rs.BluePacketBytes = b
-        backups = append(backups, &rs)
+        backups = append(backups, rs)
     }
-    client.storage.store(*backups[0], "backup")
+
+    b, err := json.Marshal(backups)
+    if err != nil {
+    	return
+	}
+    backup := backups[0].BackupMeta.curveEncrypt(b, false) // The user private key should be the same for all backups
+    fs.SaveFile(client.storage.path("backup"), backup)
     return nil
 }
 
 func (c *Client) StartRecovery(handler recoverySessionHandler) {
     pin := ""
-    var rs recoverySession
-    c.storage.load(&rs, "backup")
+    backup, _ := ioutil.ReadFile(c.storage.path("backup"))
 
     // Key in file for now
-    key, _ := ioutil.ReadFile("/tmp/recoveryPrivateKey")
-    copy(rs.BackupMeta.UserKeyPair.privateKey[:], key)
+    var key [32]byte
+    var keyBytes []byte
+	keyBytes, _ = ioutil.ReadFile("/tmp/recoveryPrivateKey")
+    hex.Decode(key[:], keyBytes[:])
 
-    // TODO: Add support multiple keyshare servers
-    //for _, rs := range sessions {
+	sessionsBytes := curveDecrypt(backup, key)
+	log.Println(string(sessionsBytes))
+	var sessions []recoverySession
+	json.Unmarshal(sessionsBytes, &sessions)
+
+    for _, rs := range sessions {
         rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
         rs.storage = &c.storage
         rs.handler = handler
@@ -404,14 +419,14 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
         rs.VerifyPin(-1, true)
         pin = rs.pin
         rs.renewDeviceKeys()
-        backup := rs.BackupMeta.curveDecrypt(rs.BluePacketBytes)
-        c.backupToStorage(backup, rs.BackupMeta.KeyshareServer)
+
+        c.backupToStorage(rs.BluePacketBytes, rs.BackupMeta.KeyshareServer)
 
         //rs.decryptionKeyBluePacket = resp.Key
         //rs.BluePacketBytes = rs.aesDecrypt(rs.RedPacketBytes)
         //backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
 
-    //}
+    }
 }
 
 func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err error){
@@ -428,12 +443,14 @@ func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err err
 }
 
 func (c *Client) storeSignatures (sigs map[string][]byte){
-	os.Mkdir(c.storage.path("sigs"), 0755)
+    if _, err := os.Stat(c.storage.path("sigs")); os.IsNotExist(err) {
+        os.Mkdir(c.storage.path("sigs"), 0755)
+    }
     for file, content := range sigs {
         if _, err := os.Stat(c.storage.path(file)); err == nil {
             os.Remove(c.storage.path(file))
         }
-        ioutil.WriteFile(c.storage.path(file), content, 0644)
+        ioutil.WriteFile(c.storage.path(file), content, 0600)
     }
 }
 
