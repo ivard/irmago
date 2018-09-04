@@ -21,6 +21,9 @@ import (
     "encoding/hex"
     "github.com/privacybydesign/irmago/internal/fs"
     "log"
+    "crypto/rsa"
+    "path/filepath"
+	"fmt"
 )
 
 type deviceKey struct {
@@ -46,13 +49,12 @@ type serverKeyPair struct {
 
 type recoverySession struct {
     BackupMeta                *backupMetadata				`json:"meta"`
-    recoveryServerKeyResponse *recoveryServerKeyResponse
     BluePacketBytes           []byte						`json:"blue"`
     RedPacketBytes			  []byte						`json:"red"`
     decryptionKeyBluePacket	  [32]byte
     pin                       string
     transport                 *irma.HTTPTransport
-    storage                   *storage
+    client                    *Client
     handler                   recoverySessionHandler
 }
 
@@ -80,6 +82,7 @@ type PhraseHandler func(proceed bool, phrase []string)
 
 type recoveryRequest struct {
     Delta           string			`json:"delta"`
+    RedPacket		[]byte			`json:"redPacket"`
 }
 
 type recoveryInitRequest struct {
@@ -92,7 +95,7 @@ type recoveryInitResponse struct {
 }
 
 type recoveryServerKeyResponse struct {
-    Key     [32]byte `json:"serverKey"`
+    Key     string `json:"serverKey"`
 }
 
 func (bmeta *backupMetadata) HashedPin(pin string) string {
@@ -192,17 +195,19 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
 	if err != nil {
         return
     }
-    rr := recoveryRequest{delta.String()}
-    rs.recoveryServerKeyResponse = &recoveryServerKeyResponse{}
-    rs.transport.Post("users/recovery/new-device", rs.recoveryServerKeyResponse, rr)
+    rr := recoveryRequest{delta.String(), rs.RedPacketBytes}
+    resp := &recoveryServerKeyResponse{}
+    rs.transport.Post("users/recovery/new-device", resp, rr)
+
     rs.BackupMeta.KeyshareServer.DeviceKey = &deviceKey{delta}
-    m, err := rs.storage.LoadKeyshareServers()
+    m, err := rs.client.storage.LoadKeyshareServers()
     if err != nil{
         return err
     }
     m[rs.BackupMeta.KeyshareServer.SchemeManagerIdentifier] = rs.BackupMeta.KeyshareServer
-    rs.storage.StoreKeyshareServers(m)
-
+    rs.client.storage.StoreKeyshareServers(m)
+    arr, err := hex.DecodeString(resp.Key)
+	copy(rs.decryptionKeyBluePacket[:], arr)
     return nil
 
     //greenPacket := rs.RedPacket.aesDecrypt(rs.bluePacketBytes)
@@ -228,7 +233,7 @@ func (rs *recoverySession) serverEncrypt(data []byte) () {
         panic(err.Error())
     }
     rs.BluePacketBytes = gcm.Seal(nonce, nonce, data, nil)
-    rs.RedPacketBytes = rs.BackupMeta.curveEncrypt(rs.decryptionKeyBluePacket[:], true) // TODO needs identifier user in packet
+    rs.RedPacketBytes = rs.rsaEncrypt(rs.decryptionKeyBluePacket[:])
     return
 }
 
@@ -275,6 +280,7 @@ func curveDecrypt (ciphertext []byte, privateKey [32]byte) (plain []byte) {
     dummyPrivAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
     dummyPubAuthKey := new([32]byte)
     curve25519.ScalarBaseMult(dummyPubAuthKey, dummyPrivAuthKey)
+    log.Println(dummyPubAuthKey)
 
     var decryptNonce [24]byte
     copy(decryptNonce[:], ciphertext[:24])
@@ -297,6 +303,36 @@ func genKeyPair(phrase []byte) (pair *userKeyPair, err error) {
     copy(pair.privateKey[:], key[:32])
     curve25519.ScalarBaseMult(&pair.PublicKey, &pair.privateKey)
     return
+}
+
+func  (rs *recoverySession) rsaEncrypt(toEnc []byte) ([]byte) {
+    rng := rand.Reader
+    pub, err := rs.client.loadServerRecoveryPubKey(rs.BackupMeta.KeyshareServer)
+    if err != nil {
+        panic("Recovery public key could not be found!")
+    }
+
+    ciphertext, err := rsa.EncryptPKCS1v15(rng, pub, toEnc)
+    if err != nil {
+        panic("Error from encryption")
+    }
+    return ciphertext
+}
+
+func (c *Client) loadServerRecoveryPubKey(kss *keyshareServer) (key *rsa.PublicKey, err error) {
+	log.Println(filepath.Join(c.Configuration.Path, kss.SchemeManagerIdentifier.String()+"/recovery_public_key.key"))
+    file, err := os.Open(filepath.Join(c.Configuration.Path, kss.SchemeManagerIdentifier.String()+"/recovery_public_key.key"))
+    if err != nil {
+        return nil, err
+    }
+    keyBytes, err := ioutil.ReadAll(file)
+    if err != nil {
+        return nil, err
+    }
+    keyDec := string(keyBytes)
+    pub := rsa.PublicKey{big.NewInt(0), 65537}
+    pub.N.SetString(keyDec, 10)
+    return &pub, nil
 }
 
 func (client *Client) InitRecovery(h recoverySessionHandler) {
@@ -327,11 +363,10 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
                 UserKeyPair:    pair,
                 ServerKeyPair:  nil,
             },
-            recoveryServerKeyResponse: nil,
             BluePacketBytes:           nil,
             pin:                       pin,
             transport:                 irma.NewHTTPTransport(kss.URL),
-            storage:                   &client.storage,
+            client:                    client,
             handler:				   h,
         }
 
@@ -379,10 +414,10 @@ func (client *Client) MakeBackup(h recoverySessionHandler) (err error) {
             BackupMeta:                &meta,
             pin:                       "",
             handler:				   h,
+            client:					   client,
         }
 
-        //rs.serverEncrypt(b)
-        rs.BluePacketBytes = b
+        rs.serverEncrypt(b)
         backups = append(backups, rs)
     }
 
@@ -405,14 +440,17 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
 	keyBytes, _ = ioutil.ReadFile("/tmp/recoveryPrivateKey")
     hex.Decode(key[:], keyBytes[:])
 
+	log.Println("Encrypted:")
+	fmt.Println(backup)
 	sessionsBytes := curveDecrypt(backup, key)
-	log.Println(string(sessionsBytes))
+	log.Println("Decrypted:")
+	fmt.Println(string(sessionsBytes))
 	var sessions []recoverySession
 	json.Unmarshal(sessionsBytes, &sessions)
 
     for _, rs := range sessions {
         rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
-        rs.storage = &c.storage
+        rs.client= c
         rs.handler = handler
         rs.pin = pin
 
@@ -420,12 +458,8 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
         pin = rs.pin
         rs.renewDeviceKeys()
 
-        c.backupToStorage(rs.BluePacketBytes, rs.BackupMeta.KeyshareServer)
-
-        //rs.decryptionKeyBluePacket = resp.Key
-        //rs.BluePacketBytes = rs.aesDecrypt(rs.RedPacketBytes)
-        //backup := rs.backupMeta.curveDecrypt(rs.bluePacketBytes)
-
+		backupBytes := rs.aesDecrypt(rs.BluePacketBytes)
+        c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
     }
 }
 
