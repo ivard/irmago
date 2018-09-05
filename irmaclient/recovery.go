@@ -58,6 +58,11 @@ type recoverySession struct {
     handler                   recoverySessionHandler
 }
 
+type redPacket struct {
+	ServerKey string `json:"serverKey"`
+	Username  string `json:"username"`
+}
+
 type backup struct {
     Signatures  []byte                `json:"signatures"`
     SecretKey   *secretKey            `json:"secretKey"`
@@ -233,7 +238,10 @@ func (rs *recoverySession) serverEncrypt(data []byte) () {
         panic(err.Error())
     }
     rs.BluePacketBytes = gcm.Seal(nonce, nonce, data, nil)
-    rs.RedPacketBytes = rs.rsaEncrypt(rs.decryptionKeyBluePacket[:])
+
+    rp := redPacket{hex.EncodeToString(rs.decryptionKeyBluePacket[:]), rs.BackupMeta.KeyshareServer.Username}
+    rpBytes, _ := json.Marshal(rp)
+    rs.RedPacketBytes = rs.rsaEncrypt(rpBytes)
     return
 }
 
@@ -334,7 +342,51 @@ func (c *Client) loadServerRecoveryPubKey(kss *keyshareServer) (key *rsa.PublicK
     pub.N.SetString(keyDec, 10)
     return &pub, nil
 }
+/*
+func keyToMnemonic(key []byte) (mnemonic []string) {
+	content, err := ioutil.ReadFile("../bips-wordlists/english.txt")
+	if (err != nil) {
+		panic("Language not supported")
+	}
+	words := strings.Split(string(content), "\n")
+	toEncode := append(key, byte(len(key)))
+	wordIndex := 0
+	for i := 0; i < len(toEncode); i++ {
+		for j := 0; j < 8; j++ {
+			bit := (toEncode[i] >> uint(7-j)) & 1
+			fmt.Print(bit)
+			wordIndex ^= int(bit) << uint(10-(8*i+j)%11)
+			if (8*i+j)%11 == 10 {
+				fmt.Printf("\n%d\n", wordIndex)
+				mnemonic = append(mnemonic, words[wordIndex])
+				wordIndex = 0
+			}
+		}
+	}
+	log.Println(mnemonic)
+	return
+}
 
+func mnemonicToKey(mnemonic []string) (key []byte) {
+	content, err := ioutil.ReadFile("../bips-wordlists/english.txt")
+	if (err != nil) {
+		panic("Language not supported")
+	}
+	words := strings.Split(string(content), "\n")
+
+	bitIndex := 0
+	var decoded []byte
+	for _, s := range mnemonic {
+		if bitIndex%11 == 0 {
+			decoded = append(decoded, byte(0))
+		}
+		wordIndex := sort.SearchStrings(words, s)
+		for i=0; i<11; i++ {
+			decoded[bitIndex/11] = ((wordIndex >> (10-i)) & 1) << 10-(bitIndex%11)
+		}
+	}
+}
+*/
 func (client *Client) InitRecovery(h recoverySessionHandler) {
     var phrase [16]byte
     if _, err := io.ReadFull(rand.Reader, phrase[:]); err != nil {
@@ -352,6 +404,8 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         if err != nil {
             panic(err)
         }
+        log.Println(pair.privateKey)
+        //keyToMnemonic(pair.privateKey[:])
 
         kssStore := *kss
         kssStore.DeviceKey = nil
