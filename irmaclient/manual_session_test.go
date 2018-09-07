@@ -11,7 +11,8 @@ import (
 	"github.com/privacybydesign/irmago/internal/test"
 	"github.com/magiconair/properties/assert"
 	"github.com/privacybydesign/irmago/internal/fs"
-	"os"
+	"log"
+	"io/ioutil"
 )
 
 type ManualSessionHandler struct {
@@ -301,12 +302,8 @@ func TestManualSessionRecovery(t *testing.T) {
 	client.InitRecovery(&ms)
 	client.MakeBackup(&ms)
 
-	// Code to delete all data except for the backup
-	fs.Copy(client.storage.path("backup"), "/tmp/backup")
+	// Delete all storage data
 	test.ClearTestStorage(t)
-	os.Mkdir(client.storage.storagePath, 0744)
-	fs.Copy("/tmp/backup", client.storage.path("backup"))
-	os.Remove("/tmp/backup")
 
 	client.StartRecovery(&ms)
 	client.NewManualSession(request, &ms)
@@ -375,12 +372,29 @@ func (sh *ManualSessionHandler) StatusUpdate(irmaAction irma.Action, status irma
 func (sh *ManualSessionHandler) RequestPin(remainingAttempts int, ph PinHandler) {
 	ph(true, "12345")
 }
-func (sh *ManualSessionHandler) RequestPhrase(ph PhraseHandler) {
 
+var phraseMem []string
+func (sh *ManualSessionHandler) RequestPhrase(ph PhraseHandler) {
+	ph(true,phraseMem)
 }
 func (sh *ManualSessionHandler) ShowPhrase(phrase []string) {
-
+	log.Println(phrase)
+	phraseMem = phrase
 }
+
+func (sh *ManualSessionHandler) OutputBackup(backup []byte) {
+	fs.SaveFile("/tmp/backup", backup)
+}
+
+func (sh *ManualSessionHandler) GetBackup(callback BackupHandler) {
+	backup, err := ioutil.ReadFile("/tmp/backup")
+	if err != nil {
+		sh.errorChannel <- &irma.SessionError{Err: errors.New("Backup file not generated")}
+		callback(false, nil)
+	}
+	callback(true, backup)
+}
+
 func (sh *ManualSessionHandler) RequestSignaturePermission(request irma.SignatureRequest, requesterName string, ph PermissionHandler) {
 	var attributes []*irma.AttributeIdentifier
 	for _, cand := range request.Candidates {
