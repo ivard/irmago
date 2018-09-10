@@ -30,10 +30,10 @@ type deviceKey struct {
 }
 
 type backupMetadata struct {
-    KeyshareServer  *keyshareServer	 `json:"keyshareServer"`
-    RecoveryNonce   []byte			 `json:"recoveryNonce"`
-    UserKeyPair		*userKeyPair 	 `json:"userKeyPair"`
-    ServerKeyPair	*serverKeyPair   `json:"serverKeyPair"`
+    KeyshareServer   *keyshareServer `json:"keyshareServer"`
+    EncRecoveryNonce []byte          `json:"recoveryNonce"`
+    UserKeyPair      *userKeyPair    `json:"userKeyPair"`
+    ServerKeyPair    *serverKeyPair  `json:"serverKeyPair"`
 }
 
 type userKeyPair struct {
@@ -103,10 +103,12 @@ type recoveryInitResponse struct {
 
 type recoveryServerKeyResponse struct {
     Key     string `json:"serverKey"`
+    Delta   string `json:"serverDelta"`
 }
 
 func (bmeta *backupMetadata) HashedPin(pin string) string {
-    hash := sha256.Sum256(append(bmeta.RecoveryNonce[:], []byte(pin)...))
+	nonce := curveDecrypt(bmeta.EncRecoveryNonce[:], bmeta.UserKeyPair.privateKey)
+    hash := sha256.Sum256(append(nonce, []byte(pin)...))
     // We must be compatible with the old Android app here,
     // which uses Base64.encodeToString(hash, Base64.DEFAULT),
     // which appends a newline.
@@ -157,8 +159,8 @@ func (rs *recoverySession) verifyPinAttempt(pin string, recovery bool) (
 // Ask for a pin, repeatedly if necessary, and either continue the keyshare protocol
 // with authorization, or stop the keyshare protocol and inform of failure.
 func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
-    if rs.BackupMeta.RecoveryNonce == nil {
-        rs.BackupMeta.RecoveryNonce = rs.BackupMeta.KeyshareServer.Nonce
+    if rs.BackupMeta.EncRecoveryNonce == nil {
+        rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(rs.BackupMeta.KeyshareServer.Nonce, false)
     }
     if rs.pin != "" {
         success, _, _, err := rs.verifyPinAttempt(rs.pin, recovery)
@@ -204,7 +206,11 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
     resp := &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", resp, rr)
 
-    rs.BackupMeta.KeyshareServer.DeviceKey = &deviceKey{delta}
+    serverDelta, passed := new(big.Int).SetString(resp.Delta, 10)
+    if !passed {
+    	return errors.New("Invalid response server delta!")
+	}
+    rs.BackupMeta.KeyshareServer.DeviceKey = &deviceKey{delta.Xor(delta, serverDelta)}
     m, err := rs.client.storage.LoadKeyshareServers()
     if err != nil{
         return err
@@ -359,10 +365,10 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
 
         rs := recoverySession{
             BackupMeta:            &backupMetadata{
-                KeyshareServer: &kssStore,
-                RecoveryNonce:  nil,
-                UserKeyPair:    pair,
-                ServerKeyPair:  nil,
+                KeyshareServer:   &kssStore,
+                EncRecoveryNonce: nil,
+                UserKeyPair:      pair,
+                ServerKeyPair:    nil,
             },
             BluePacketBytes:           nil,
             pin:                       pin,
@@ -374,7 +380,7 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         rs.VerifyPin(-1, false)
         pin = rs.pin
 
-        rs.BackupMeta.RecoveryNonce = salt[:]
+        rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(salt[:], false)
         status := recoveryInitResponse{}
         err = rs.transport.Post("users/recovery/setup", &status, recoveryInitRequest{
             HashedPin: rs.BackupMeta.HashedPin(pin),
@@ -451,6 +457,7 @@ func (c *Client) StartRecovery(handler recoverySessionHandler) {
 						rs.client = c
 						rs.handler = handler
 						rs.pin = pin
+						rs.BackupMeta.UserKeyPair = key
 
 						rs.VerifyPin(-1, true)
 						pin = rs.pin
