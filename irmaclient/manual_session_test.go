@@ -328,8 +328,8 @@ func TestStorageToBytes(t *testing.T) {
 	kss := client.keyshareServers[client.genSchemeManagersList(true)[0]]
 
 	key := client.secretkey
-	zipFile := client.storageToBackup(kss)
-	err := client.backupToStorage(zipFile, kss)
+	zipFile, err := client.storageToBackup(kss)
+	err = client.backupToStorage(zipFile, kss)
 	if err != nil {
 		t.Fail()
 	}
@@ -449,5 +449,5 @@ func (sh *ManualSessionHandler) RecoveryBlocked(duration int) {
 }
 
 func (sh *ManualSessionHandler) RecoveryError(err error) {
-	sh.errorChannel <- &irma.SessionError{Err: errors.New("RecoveryError")}
+	sh.errorChannel <- &irma.SessionError{Err: err}
 }
