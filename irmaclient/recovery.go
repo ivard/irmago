@@ -34,7 +34,7 @@ type backupMetadata struct {
     KeyshareServer   *keyshareServer `json:"keyshareServer"`
     EncRecoveryNonce []byte          `json:"recoveryNonce"`
     UserKeyPair      *userKeyPair    `json:"userKeyPair"`
-    ServerKeyPair    *serverKeyPair  `json:"serverKeyPair"`
+    ServerKeyPair    *serverKeyPair  `json:"serverKeyPair,omitempty"`
 }
 
 type userKeyPair struct {
@@ -64,13 +64,14 @@ type redPacket struct {
 }
 
 type backup struct {
-    Signatures  []byte                `json:"signatures"`
-    SecretKey   *secretKey            `json:"secretKey"`
-    Attributes  []*irma.AttributeList `json:"attrs"`
-    Paillier    *paillierPrivateKey   `json:"paillier"`
-    Logs        []*LogEntry           `json:"logs"`
-    Preferences Preferences           `json:"preferences"`
-    Updates     []update              `json:"updates"`
+    Signatures      []byte                `json:"signatures"`
+    SecretKey       *secretKey            `json:"secretKey"`
+    Attributes      []*irma.AttributeList `json:"attrs"`
+    Paillier        *paillierPrivateKey   `json:"paillier"`
+    Logs            []*LogEntry           `json:"logs"`
+    Preferences     Preferences           `json:"preferences"`
+    Updates         []update              `json:"updates"`
+    KeyshareServer  *keyshareServer       `json:"keyshareServer"`
 }
 
 type recoverySessionHandler interface {
@@ -90,6 +91,7 @@ type BackupHandler func(proceed bool, backup []byte)
 
 type recoveryRequest struct {
     Delta           string			`json:"delta"`
+    HashedPin       string          `json:"newHashedPin"`
     RedPacket		[]byte			`json:"redPacket"`
 }
 
@@ -215,7 +217,11 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
 	if err != nil {
         return
     }
-    rr := recoveryRequest{delta.String(), rs.RedPacketBytes}
+
+	rs.BackupMeta.KeyshareServer.Nonce = make([]byte, 32)
+    _, err = io.ReadFull(rand.Reader, rs.BackupMeta.KeyshareServer.Nonce)
+
+    rr := recoveryRequest{delta.String(), rs.BackupMeta.KeyshareServer.HashedPin(rs.pin), rs.RedPacketBytes}
     resp := &recoveryServerKeyResponse{}
     rs.transport.Post("users/recovery/new-device", resp, rr)
 
@@ -386,8 +392,6 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         h.ShowPhrase(strings.Split(mnemonic, " "))
 
         kssStore := *kss
-        kssStore.DeviceKey = nil
-
         rs := recoverySession{
             BackupMeta:            &backupMetadata{
                 KeyshareServer:   &kssStore,
@@ -404,6 +408,11 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
 
         rs.VerifyPin(-1, false)
         pin = rs.pin
+
+        // Delete private information from unencrypted metadata
+		kssStore.DeviceKey = nil
+		kssStore.Nonce = nil
+		kssStore.PrivateKey = nil
 
         rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(salt[:], false)
         status := recoveryInitResponse{}
@@ -458,6 +467,7 @@ func (client *Client) MakeBackup(h recoverySessionHandler) {
         h.RecoveryError(err)
     	return
 	}
+
     backup := backups[0].BackupMeta.curveEncrypt(b, false) // The user private key should be the same for all backups
     h.OutputBackup(backup)
 }
@@ -566,14 +576,16 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte, err error)
     if err != nil {
     	panic("JSON library produced invalid JSON")
 	}
+
     b := backup{
-        Signatures:  sigsJson,
-        SecretKey:   c.secretkey,
-        Attributes:  selected,
-        Paillier:    c.paillierKey(true),
-        Logs:        c.logs,
-        Preferences: c.Preferences,
-        Updates:     c.updates,
+        Signatures:     sigsJson,
+        SecretKey:      c.secretkey,
+        Attributes:     selected,
+        Paillier:       c.paillierKey(true),
+        Logs:           c.logs,
+        Preferences:    c.Preferences,
+        Updates:        c.updates,
+        KeyshareServer: c.keyshareServers[kss.SchemeManagerIdentifier],
     }
     backup, err := json.Marshal(b)
     if err != nil {
@@ -599,7 +611,10 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
     os.Mkdir(c.storage.storagePath, 0744)
 
     c.storeSignatures(sigs)
-    c.keyshareServers[kss.SchemeManagerIdentifier] = kss
+    b.KeyshareServer.Nonce = kss.Nonce
+    b.KeyshareServer.DeviceKey = kss.DeviceKey
+
+    c.keyshareServers[kss.SchemeManagerIdentifier] = b.KeyshareServer
     c.storage.StoreKeyshareServers(c.keyshareServers)
     c.storage.StoreSecretKey(b.SecretKey)
     c.storage.StorePreferences(b.Preferences)
@@ -624,5 +639,6 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
 		c.androidStoragePath,
 		c.handler,
 	)
+
     return err
 }

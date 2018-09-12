@@ -449,5 +449,6 @@ func (sh *ManualSessionHandler) RecoveryBlocked(duration int) {
 }
 
 func (sh *ManualSessionHandler) RecoveryError(err error) {
+	fmt.Println(err)
 	sh.errorChannel <- &irma.SessionError{Err: err}
 }

@@ -48,8 +48,8 @@ type keyshareSession struct {
 type keyshareServer struct {
 	URL                     string              `json:"url"`
 	Username                string              `json:"username"`
-	Nonce                   []byte              `json:"nonce"`
-	PrivateKey              *paillierPrivateKey `json:"keyPair"`
+	Nonce                   []byte              `json:"nonce,omitempty"`
+	PrivateKey              *paillierPrivateKey `json:"keyPair,omitempty"`
 	SchemeManagerIdentifier irma.SchemeManagerIdentifier
 	token                   string
 
