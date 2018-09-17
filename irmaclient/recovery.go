@@ -76,6 +76,8 @@ type backup struct {
 
 type recoverySessionHandler interface {
     RecoveryCancelled()
+    RecoveryInitSuccess()
+    RecoveryPerformed(newClient *Client)
     RequestPin(remainingAttempts int, callback PinHandler)
     RequestPhrase(callback PhraseHandler)
     ShowPhrase(phrase []string)
@@ -431,6 +433,7 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
     if err != nil {
     	h.RecoveryError(err)
 	}
+	h.RecoveryInitSuccess()
     return
 }
 
@@ -518,15 +521,27 @@ func (c *Client) StartRecovery(h recoverySessionHandler) {
 						backupBytes, err := rs.aesDecrypt(rs.BluePacketBytes)
 						if err != nil {
 							h.RecoveryError(err)
+							return
 						}
 						err = c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
 						if err != nil {
 							h.RecoveryError(err)
+							return
 						}
+                        newClient, err := New(c.storage.storagePath, c.irmaConfigurationPath, c.androidStoragePath, c.handler)
+                        if err != nil {
+                            h.RecoveryError(err)
+                            return
+                        }
+						h.RecoveryPerformed(newClient)
 					}
-				}
+				} else {
+				    h.RecoveryError(errors.New("No phrase entered"))
+                }
 			})
-		}
+		} else {
+		    h.RecoveryError(errors.New("No backup entered"))
+        }
 	})
 }
 
@@ -607,23 +622,40 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
 	}
 
 	// Delete previous files
-	os.Remove(c.storage.storagePath)
-    os.Mkdir(c.storage.storagePath, 0744)
+	// Assumption: old storage files are still in place
+	files, err := filepath.Glob(c.storage.storagePath + "/*")
+	for _, f := range files {
+		if !strings.Contains(f, "irma_configuration") {
+			err = os.RemoveAll(f)
+		}
+	}
+	if err != nil {
+		return err
+	}
 
     c.storeSignatures(sigs)
     b.KeyshareServer.Nonce = kss.Nonce
     b.KeyshareServer.DeviceKey = kss.DeviceKey
 
     c.keyshareServers[kss.SchemeManagerIdentifier] = b.KeyshareServer
-    c.storage.StoreKeyshareServers(c.keyshareServers)
-    c.storage.StoreSecretKey(b.SecretKey)
-    c.storage.StorePreferences(b.Preferences)
-    c.storage.StorePaillierKeys(b.Paillier)
-    c.storage.StoreUpdates(b.Updates)
-    c.storage.StoreLogs(b.Logs)
+    err = c.storage.StoreKeyshareServers(c.keyshareServers)
+    err = c.storage.StoreSecretKey(b.SecretKey)
+    err = c.storage.StorePreferences(b.Preferences)
+    err = c.storage.StorePaillierKeys(b.Paillier)
+    err = c.storage.StoreUpdates(b.Updates)
+    err = c.storage.StoreLogs(b.Logs)
 
+    log.Println(b)
+    log.Println(c.attributes)
+    log.Println(b.Attributes)
     for _, a := range b.Attributes {
-        a.MetadataAttribute = irma.MetadataFromInt(a.Ints[0], c.storage.Configuration)
+    	log.Println(".................")
+        log.Println(a)
+        log.Println(c.Configuration)
+        log.Println(c.storage.Configuration)
+		a.MetadataAttribute = irma.MetadataFromInt(a.Ints[0], c.storage.Configuration)
+        log.Println(a.CredentialType())
+        log.Println(a.CredentialType().Identifier())
         val, ok := c.attributes[a.CredentialType().Identifier()]
         if !ok {
             c.attributes[a.Info().CredentialTypeID] = []*irma.AttributeList{a}
@@ -631,14 +663,13 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
             c.attributes[a.Info().CredentialTypeID] = append(val, a)
         }
     }
-    c.storage.StoreAttributes(c.attributes)
 
+    err = c.storage.StoreAttributes(c.attributes)
     c, err = New(
 		c.storage.storagePath,
 		c.irmaConfigurationPath,
 		c.androidStoragePath,
 		c.handler,
 	)
-
     return err
 }

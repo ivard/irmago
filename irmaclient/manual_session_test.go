@@ -13,6 +13,8 @@ import (
 	"github.com/privacybydesign/irmago/internal/fs"
 	"log"
 	"io/ioutil"
+	"encoding/hex"
+	"os"
 )
 
 type ManualSessionHandler struct {
@@ -21,6 +23,7 @@ type ManualSessionHandler struct {
 	t                 *testing.T
 	errorChannel      chan *irma.SessionError
 	resultChannel     chan *irma.SignatureProofResult
+	recoveryChannel	  chan *Client
 	sigRequest        *irma.SignatureRequest // Request used to create signature
 	sigVerifyRequest  *irma.SignatureRequest // Request used to verify signature
 }
@@ -54,6 +57,7 @@ func corruptAndConvertProofString(proof string) []byte {
 func createManualSessionHandler(request string, invalidRequest string, t *testing.T) ManualSessionHandler {
 	errorChannel := make(chan *irma.SessionError)
 	resultChannel := make(chan *irma.SignatureProofResult)
+	recoveryChannel := make(chan *Client)
 
 	sigRequestJSON := []byte(request)
 	invalidSigRequestJSON := []byte(invalidRequest)
@@ -66,6 +70,7 @@ func createManualSessionHandler(request string, invalidRequest string, t *testin
 		t:                t,
 		errorChannel:     errorChannel,
 		resultChannel:    resultChannel,
+		recoveryChannel:  recoveryChannel,
 		sigRequest:       sigRequest,
 		sigVerifyRequest: invalidSigRequest,
 	}
@@ -299,15 +304,31 @@ func TestManualSessionRecovery(t *testing.T) {
 	ms := createManualSessionHandler(request, request, t)
 
 	client = parseStorage(t)
-	client.InitRecovery(&ms)
+	go client.InitRecovery(&ms)
+	if err := <-ms.errorChannel; err != nil {
+		test.ClearTestStorage(t)
+		t.Fatal(*err)
+	}
+
 	client.MakeBackup(&ms)
 
 	// Delete all storage data
 	test.ClearTestStorage(t)
+	os.Mkdir(client.storage.storagePath, 0744)
+	client, err := New(client.storage.storagePath, client.irmaConfigurationPath, client.androidStoragePath, client.handler)
+	if err != nil {
+		t.Log(err)
+		t.Fail()
+	}
 
-	client.StartRecovery(&ms)
-	client.NewManualSession(request, &ms)
+	go client.StartRecovery(&ms)
+	if err := <-ms.errorChannel; err != nil {
+		test.ClearTestStorage(t)
+		t.Fatal(*err)
+	}
 
+	client = <- ms.recoveryChannel
+	go client.NewManualSession(request, &ms)
 	if err := <-ms.errorChannel; err != nil {
 		test.ClearTestStorage(t)
 		t.Fatal(*err)
@@ -392,6 +413,7 @@ func (sh *ManualSessionHandler) GetBackup(callback BackupHandler) {
 		sh.errorChannel <- &irma.SessionError{Err: errors.New("Backup file not generated")}
 		callback(false, nil)
 	}
+	fmt.Println(hex.EncodeToString(backup))
 	callback(true, backup)
 }
 
@@ -409,6 +431,19 @@ func (sh *ManualSessionHandler) RequestIssuancePermission(request irma.IssuanceR
 
 func (sh *ManualSessionHandler) RecoveryPinOk() {
 
+}
+
+func (sh *ManualSessionHandler) RecoveryInitSuccess() {
+	log.Println("Recovery init was a success")
+	sh.errorChannel <- nil
+}
+
+func (sh *ManualSessionHandler) RecoveryPerformed(newClient *Client) {
+	log.Println("Recovery was a success")
+	go func () {
+		sh.recoveryChannel <- newClient
+	}()
+	sh.errorChannel <- nil
 }
 
 // These handlers should not be called, fail test if they are called
