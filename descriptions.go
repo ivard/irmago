@@ -69,6 +69,7 @@ type AttributeDescription struct {
 	DisplayIndex *int   `xml:"displayIndex,attr" json:",omitempty"`
 	Name         TranslatedString
 	Description  TranslatedString
+	Type         string // Needed for typing images
 }
 
 func (ad AttributeDescription) GetAttributeTypeIdentifier(cred CredentialTypeIdentifier) AttributeTypeIdentifier {
