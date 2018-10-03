@@ -181,6 +181,7 @@ func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
         if success {
             return
         }
+        rs.pin = "" // PIN was apparently not correct
         rs.handler.RecoveryError(err)
     } else {
         rs.handler.RequestPin(attempts, PinHandler(func (proceed bool, pin string) {
@@ -188,7 +189,6 @@ func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
             rs.handler.RecoveryCancelled()
             return
         }
-        rs.pin = pin
         success, attemptsRemaining, blocked, err := rs.verifyPinAttempt(pin, recovery)
         if err != nil {
             rs.handler.RecoveryError(err)
@@ -199,8 +199,8 @@ func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
             return
         }
         if success {
+            rs.pin = pin
             rs.handler.RecoveryPinOk()
-            success = true
             return
         }
         // Not successful but no error and not yet blocked: try again
@@ -409,12 +409,16 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         }
 
         rs.VerifyPin(-1, false)
+        if rs.pin == "" {
+            // PIN could not be verified
+            return
+        }
         pin = rs.pin
 
         // Delete private information from unencrypted metadata
-		kssStore.DeviceKey = nil
-		kssStore.Nonce = nil
-		kssStore.PrivateKey = nil
+        kssStore.DeviceKey = nil
+        kssStore.Nonce = nil
+        kssStore.PrivateKey = nil
 
         rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(salt[:], false)
         status := recoveryInitResponse{}
@@ -511,6 +515,12 @@ func (c *Client) StartRecovery(h recoverySessionHandler) {
 						rs.BackupMeta.UserKeyPair = key
 
 						rs.VerifyPin(-1, true)
+						if rs.pin == "" {
+						    //PIN could not be verified
+						    //TODO: Does not revert changes already made when having multiple keyshare servers
+						    return
+                        }
+
 						pin = rs.pin
 						err := rs.renewDeviceKeys()
 						if err != nil {
@@ -672,4 +682,9 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
 		c.handler,
 	)
     return err
+}
+
+func (c *Client) RecoveryIsConfigured() (bool){
+	x, err := c.storage.LoadRecoveryMeta()
+	return err == nil && len(x) > 0
 }
