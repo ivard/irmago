@@ -481,77 +481,87 @@ func (client *Client) MakeBackup(h recoverySessionHandler) {
 
 func (c *Client) StartRecovery(h recoverySessionHandler) {
     pin := ""
+    log.Println("Getting backup")
     h.GetBackup(func (proceed bool, backup []byte) {
-    	if proceed {
-			h.RequestPhrase(func(proceed bool, phrase []string) {
-				if proceed {
-					phraseBytes, err := bip39.EntropyFromMnemonic(strings.Join(phrase, " "))
-					if err != nil {
-					    h.RecoveryError(err)
-						return
-					}
-					key, err := genKeyPair(phraseBytes)
-					if err != nil {
-					    h.RecoveryError(err)
-						return
-					}
-
-					sessionsBytes, err := curveDecrypt(backup, key.privateKey)
-					if err != nil {
-						h.RecoveryError(err)
-						return
-					}
-					var sessions []recoverySession
-					err = json.Unmarshal(sessionsBytes, &sessions)
-					if err != nil {
-						h.RecoveryError(err)
-					}
-
-					for _, rs := range sessions {
-						rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
-						rs.client = c
-						rs.handler = h
-						rs.pin = pin
-						rs.BackupMeta.UserKeyPair = key
-
-						rs.VerifyPin(-1, true)
-						if rs.pin == "" {
-						    //PIN could not be verified
-						    //TODO: Does not revert changes already made when having multiple keyshare servers
-						    return
-                        }
-
-						pin = rs.pin
-						err := rs.renewDeviceKeys()
-						if err != nil {
-						    h.RecoveryError(err)
-						    return
-                        }
-
-						backupBytes, err := rs.aesDecrypt(rs.BluePacketBytes)
-						if err != nil {
-							h.RecoveryError(err)
-							return
-						}
-						err = c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
-						if err != nil {
-							h.RecoveryError(err)
-							return
-						}
-                        newClient, err := New(c.storage.storagePath, c.irmaConfigurationPath, c.androidStoragePath, c.handler)
-                        if err != nil {
-                            h.RecoveryError(err)
-                            return
-                        }
-						h.RecoveryPerformed(newClient)
-					}
-				} else {
-				    h.RecoveryError(errors.New("No phrase entered"))
-                }
-			})
-		} else {
-		    h.RecoveryError(errors.New("No backup entered"))
+        log.Println("Backup received")
+    	if !proceed {
+            h.RecoveryError(errors.New("No backup entered"))
+            return
         }
+
+        log.Println("Requesting phrase")
+        h.RequestPhrase(func(proceed bool, phrase []string) {
+            log.Println("Phrase received")
+            if !proceed {
+                h.RecoveryError(errors.New("No phrase entered"))
+            }
+
+            phraseBytes, err := bip39.EntropyFromMnemonic(strings.Join(phrase, " "))
+            if err != nil {
+                h.RecoveryError(err)
+                return
+            }
+            key, err := genKeyPair(phraseBytes)
+            if err != nil {
+                h.RecoveryError(err)
+                return
+            }
+
+            sessionsBytes, err := curveDecrypt(backup, key.privateKey)
+            if err != nil {
+                h.RecoveryError(err)
+                return
+            }
+            var sessions []recoverySession
+            err = json.Unmarshal(sessionsBytes, &sessions)
+            if err != nil {
+                h.RecoveryError(err)
+            }
+
+            if err = c.removeStoredData(); err!=nil {
+                h.RecoveryError(err)
+                return
+            }
+
+            for _, rs := range sessions {
+                rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
+                rs.client = c
+                rs.handler = h
+                rs.pin = pin
+                rs.BackupMeta.UserKeyPair = key
+
+                rs.VerifyPin(-1, true)
+                if rs.pin == "" {
+                    //PIN could not be verified
+                    //TODO: Does not revert changes already made when having multiple keyshare servers
+                    return
+                }
+
+                pin = rs.pin
+                err := rs.renewDeviceKeys()
+                if err != nil {
+                    h.RecoveryError(err)
+                    return
+                }
+
+                backupBytes, err := rs.aesDecrypt(rs.BluePacketBytes)
+                if err != nil {
+                    h.RecoveryError(err)
+                    return
+                }
+                err = c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
+                if err != nil {
+                    h.RecoveryError(err)
+                    return
+                }
+                newClient, err := New(c.storage.storagePath, c.irmaConfigurationPath, c.androidStoragePath, c.handler)
+                if err != nil {
+                    h.RecoveryError(err)
+                    return
+                }
+                h.RecoveryPerformed(newClient)
+            }
+        })
 	})
 }
 
@@ -620,6 +630,24 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte, err error)
     return backup, nil
 }
 
+func (c *Client) removeStoredData() (err error) {
+    // Delete previous files
+    files, err := filepath.Glob(c.storage.storagePath + "/*")
+    for _, f := range files {
+        if !strings.Contains(f, "irma_configuration") {
+            err = os.RemoveAll(f)
+        }
+    }
+    if err != nil {
+        return
+    }
+
+    // Maps are filled on the fly, so need to be emptied first
+    c.keyshareServers = make(map[irma.SchemeManagerIdentifier]*keyshareServer)
+    c.attributes = make(map[irma.CredentialTypeIdentifier][]*irma.AttributeList)
+    return
+}
+
 func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err error) {
     b := backup{}
     if err := json.Unmarshal(backupFile, &b); err != nil {
@@ -629,18 +657,6 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
     err = json.Unmarshal(b.Signatures, &sigs)
     if err != nil {
     	return err
-	}
-
-	// Delete previous files
-	// Assumption: old storage files are still in place
-	files, err := filepath.Glob(c.storage.storagePath + "/*")
-	for _, f := range files {
-		if !strings.Contains(f, "irma_configuration") {
-			err = os.RemoveAll(f)
-		}
-	}
-	if err != nil {
-		return err
 	}
 
     c.storeSignatures(sigs)
@@ -655,17 +671,8 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
     err = c.storage.StoreUpdates(b.Updates)
     err = c.storage.StoreLogs(b.Logs)
 
-    log.Println(b)
-    log.Println(c.attributes)
-    log.Println(b.Attributes)
     for _, a := range b.Attributes {
-    	log.Println(".................")
-        log.Println(a)
-        log.Println(c.Configuration)
-        log.Println(c.storage.Configuration)
 		a.MetadataAttribute = irma.MetadataFromInt(a.Ints[0], c.storage.Configuration)
-        log.Println(a.CredentialType())
-        log.Println(a.CredentialType().Identifier())
         val, ok := c.attributes[a.CredentialType().Identifier()]
         if !ok {
             c.attributes[a.Info().CredentialTypeID] = []*irma.AttributeList{a}

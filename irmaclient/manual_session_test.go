@@ -350,6 +350,7 @@ func TestStorageToBytes(t *testing.T) {
 
 	key := client.secretkey
 	zipFile, err := client.storageToBackup(kss)
+	client.removeStoredData()
 	err = client.backupToStorage(zipFile, kss)
 	if err != nil {
 		t.Fail()
