@@ -318,7 +318,7 @@ func curveDecrypt (ciphertext []byte, privateKey [32]byte) (plain []byte, err er
 
     plain, ok := box.Open(nil, ciphertext[24:], &decryptNonce, dummyPubAuthKey, &privateKey)
     if !ok {
-        return nil, errors.New("Decryption error")
+        return nil, errors.New("Decryption error, was the right key supplied?")
     }
     return plain, nil
 }
@@ -427,15 +427,18 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         })
         if err != nil {
             h.RecoveryError(err)
+            return
         }
         if status.Status != "success" {
             h.RecoveryError(errors.New("Server error in setup recovery"))
+            return
         }
         metas = append(metas, *rs.BackupMeta)
     }
     err := client.storage.StoreRecoveryMetas(metas)
     if err != nil {
     	h.RecoveryError(err)
+    	return
 	}
 	h.RecoveryInitSuccess()
     return
@@ -465,6 +468,7 @@ func (client *Client) MakeBackup(h recoverySessionHandler) {
         err = rs.serverEncrypt(b)
         if err != nil {
         	h.RecoveryError(err)
+        	return
 		}
         backups = append(backups, rs)
     }
@@ -494,6 +498,7 @@ func (c *Client) StartRecovery(h recoverySessionHandler) {
             log.Println("Phrase received")
             if !proceed {
                 h.RecoveryError(errors.New("No phrase entered"))
+                return
             }
 
             phraseBytes, err := bip39.EntropyFromMnemonic(strings.Join(phrase, " "))
@@ -516,6 +521,7 @@ func (c *Client) StartRecovery(h recoverySessionHandler) {
             err = json.Unmarshal(sessionsBytes, &sessions)
             if err != nil {
                 h.RecoveryError(err)
+                return
             }
 
             if err = c.removeStoredData(); err!=nil {
