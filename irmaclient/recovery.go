@@ -86,6 +86,7 @@ type recoverySessionHandler interface {
     RecoveryPinOk()
     RecoveryBlocked(duration int)
     RecoveryError(err error)
+    RecoveryPhraseIncorrect(err error)
 }
 
 type PhraseHandler func(proceed bool, phrase []string)
@@ -185,26 +186,26 @@ func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
         rs.handler.RecoveryError(err)
     } else {
         rs.handler.RequestPin(attempts, PinHandler(func (proceed bool, pin string) {
-        if !proceed {
-            rs.handler.RecoveryCancelled()
-            return
-        }
-        success, attemptsRemaining, blocked, err := rs.verifyPinAttempt(pin, recovery)
-        if err != nil {
-            rs.handler.RecoveryError(err)
-            return
-        }
-        if blocked != 0 {
-            rs.handler.RecoveryBlocked(blocked)
-            return
-        }
-        if success {
-            rs.pin = pin
-            rs.handler.RecoveryPinOk()
-            return
-        }
-        // Not successful but no error and not yet blocked: try again
-        rs.VerifyPin(attemptsRemaining, recovery)
+            if !proceed {
+                rs.handler.RecoveryCancelled()
+                return
+            }
+            success, attemptsRemaining, blocked, err := rs.verifyPinAttempt(pin, recovery)
+            if err != nil {
+                rs.handler.RecoveryError(err)
+                return
+            }
+            if blocked != 0 {
+                rs.handler.RecoveryBlocked(blocked)
+                return
+            }
+            if success {
+                rs.pin = pin
+                rs.handler.RecoveryPinOk()
+                return
+            }
+            // Not successful but no error and not yet blocked: try again
+            rs.VerifyPin(attemptsRemaining, recovery)
         }))
     }
 }
@@ -484,7 +485,6 @@ func (client *Client) MakeBackup(h recoverySessionHandler) {
 }
 
 func (c *Client) StartRecovery(h recoverySessionHandler) {
-    pin := ""
     log.Println("Getting backup")
     h.GetBackup(func (proceed bool, backup []byte) {
         log.Println("Backup received")
@@ -494,81 +494,95 @@ func (c *Client) StartRecovery(h recoverySessionHandler) {
         }
 
         log.Println("Requesting phrase")
-        h.RequestPhrase(func(proceed bool, phrase []string) {
-            log.Println("Phrase received")
-            if !proceed {
-                h.RecoveryError(errors.New("No phrase entered"))
-                return
-            }
-
-            phraseBytes, err := bip39.EntropyFromMnemonic(strings.Join(phrase, " "))
-            if err != nil {
-                h.RecoveryError(err)
-                return
-            }
-            key, err := genKeyPair(phraseBytes)
-            if err != nil {
-                h.RecoveryError(err)
-                return
-            }
-
-            sessionsBytes, err := curveDecrypt(backup, key.privateKey)
-            if err != nil {
-                h.RecoveryError(err)
-                return
-            }
-            var sessions []recoverySession
-            err = json.Unmarshal(sessionsBytes, &sessions)
-            if err != nil {
-                h.RecoveryError(err)
-                return
-            }
-
-            if err = c.removeStoredData(); err!=nil {
-                h.RecoveryError(err)
-                return
-            }
-
-            for _, rs := range sessions {
-                rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
-                rs.client = c
-                rs.handler = h
-                rs.pin = pin
-                rs.BackupMeta.UserKeyPair = key
-
-                rs.VerifyPin(-1, true)
-                if rs.pin == "" {
-                    //PIN could not be verified
-                    //TODO: Does not revert changes already made when having multiple keyshare servers
-                    return
-                }
-
-                pin = rs.pin
-                err := rs.renewDeviceKeys()
-                if err != nil {
-                    h.RecoveryError(err)
-                    return
-                }
-
-                backupBytes, err := rs.aesDecrypt(rs.BluePacketBytes)
-                if err != nil {
-                    h.RecoveryError(err)
-                    return
-                }
-                err = c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
-                if err != nil {
-                    h.RecoveryError(err)
-                    return
-                }
-                newClient, err := New(c.storage.storagePath, c.irmaConfigurationPath, c.androidStoragePath, c.handler)
-                if err != nil {
-                    h.RecoveryError(err)
-                    return
-                }
-                h.RecoveryPerformed(newClient)
-            }
+        h.RequestPhrase(func (proceed bool, phrase []string) {
+            c.decryptAndRecoverBackup(proceed, phrase, h, backup)
         })
 	})
+}
+
+func (c *Client) decryptAndRecoverBackup(proceed bool, phrase []string, h recoverySessionHandler, backup []byte) {
+    log.Println("Phrase received")
+    if !proceed {
+        return
+    }
+
+    phraseBytes, err := bip39.MnemonicToByteArray(strings.Join(phrase, " "))
+    if err != nil {
+        h.RecoveryPhraseIncorrect(err)
+        h.RequestPhrase(func (proceed bool, phrase []string) {
+            c.decryptAndRecoverBackup(proceed, phrase, h, backup)
+        })
+        return
+    }
+    key, err := genKeyPair(phraseBytes)
+    if err != nil {
+        h.RecoveryError(err)
+        return
+    }
+
+    sessionsBytes, err := curveDecrypt(backup, key.privateKey)
+    if err != nil {
+        h.RecoveryPhraseIncorrect(err)
+        h.RequestPhrase(func (proceed bool, phrase []string) {
+            c.decryptAndRecoverBackup(proceed, phrase, h, backup)
+        })
+        return
+    }
+    var sessions []recoverySession
+    err = json.Unmarshal(sessionsBytes, &sessions)
+    if err != nil {
+        h.RecoveryError(err)
+        return
+    }
+
+    if err = c.removeStoredData(); err!=nil {
+        h.RecoveryError(err)
+        return
+    }
+
+    pin := ""
+    for _, rs := range sessions {
+        rs.transport = irma.NewHTTPTransport(rs.BackupMeta.KeyshareServer.URL)
+        rs.client = c
+        rs.handler = h
+        rs.BackupMeta.UserKeyPair = key
+
+        rs.pin = pin
+        rs.VerifyPin(-1, true)
+        if rs.pin == "" {
+            //PIN could not be verified
+            //TODO: Does not revert changes already made when having multiple keyshare servers
+            return
+        }
+
+        pin = rs.pin
+        err := rs.renewDeviceKeys()
+        if err != nil {
+            h.RecoveryError(err)
+            return
+        }
+
+        backupBytes, err := rs.aesDecrypt(rs.BluePacketBytes)
+        if err != nil {
+            h.RecoveryError(err)
+            return
+        }
+        err = c.backupToStorage(backupBytes, rs.BackupMeta.KeyshareServer)
+        if err != nil {
+            h.RecoveryError(err)
+            return
+        }
+        newClient, err := New(c.storage.storagePath, c.irmaConfigurationPath, c.androidStoragePath, c.handler)
+        if err != nil {
+            h.RecoveryError(err)
+            return
+        }
+        // TODO: No support yet for multiple keyshare servers, return after the first session
+        newMetas := []backupMetadata{*rs.BackupMeta}
+        newClient.storage.StoreRecoveryMetas(newMetas)
+        h.RecoveryPerformed(newClient)
+        return
+    }
 }
 
 func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err error){
