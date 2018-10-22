@@ -506,7 +506,7 @@ func (c *Client) decryptAndRecoverBackup(proceed bool, phrase []string, h recove
         return
     }
 
-    phraseBytes, err := bip39.MnemonicToByteArray(strings.Join(phrase, " "))
+    phraseBytes, err := bip39.EntropyFromMnemonic(strings.Join(phrase, " "))
     if err != nil {
         h.RecoveryPhraseIncorrect(err)
         h.RequestPhrase(func (proceed bool, phrase []string) {
@@ -579,7 +579,11 @@ func (c *Client) decryptAndRecoverBackup(proceed bool, phrase []string, h recove
         }
         // TODO: No support yet for multiple keyshare servers, return after the first session
         newMetas := []backupMetadata{*rs.BackupMeta}
-        newClient.storage.StoreRecoveryMetas(newMetas)
+        err = newClient.storage.StoreRecoveryMetas(newMetas)
+        if err != nil {
+            h.RecoveryError(err)
+            return
+        }
         h.RecoveryPerformed(newClient)
         return
     }
