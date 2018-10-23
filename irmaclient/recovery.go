@@ -375,6 +375,10 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
 
     pin := ""
     var metas []backupMetadata
+    if len(client.EnrolledSchemeManagers()) <= 0 {
+        h.RecoveryError(errors.New("User is not enrolled yet"))
+        return
+    }
     for _,kss := range client.keyshareServers{
         var salt [24]byte
         if _, err := io.ReadFull(rand.Reader, salt[:]); err != nil {
