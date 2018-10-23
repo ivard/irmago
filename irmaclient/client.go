@@ -830,6 +830,9 @@ func (client *Client) KeyshareRemove(manager irma.SchemeManagerIdentifier) error
 
 // KeyshareRemoveAll removes all keyshare server registrations.
 func (client *Client) KeyshareRemoveAll() error {
+	if err := client.storage.StoreRecoveryMetas(nil); err != nil {
+		return err
+	}
 	client.keyshareServers = map[irma.SchemeManagerIdentifier]*keyshareServer{}
 	return client.storage.StoreKeyshareServers(client.keyshareServers)
 }
