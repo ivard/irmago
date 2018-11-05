@@ -13,8 +13,8 @@ import (
 	"github.com/privacybydesign/irmago/internal/fs"
 	"log"
 	"io/ioutil"
-	"encoding/hex"
 	"os"
+	"github.com/stretchr/testify/require"
 )
 
 type ManualSessionHandler struct {
@@ -304,6 +304,24 @@ func TestManualSessionRecovery(t *testing.T) {
 	ms := createManualSessionHandler(request, request, t)
 
 	client = parseStorage(t)
+
+	// Remove existing registration at test keyshare server
+	credtype := irma.NewCredentialTypeIdentifier("test.test.mijnirma")
+	require.NoError(t, client.RemoveCredentialByHash(
+		client.Attributes(credtype, 0).Hash(),
+	))
+	require.NoError(t, client.KeyshareRemove(irma.NewSchemeManagerIdentifier("test")))
+
+	// Do a new registration session
+	c := make(chan error) // channel for TestClientHandler to inform us of result
+	client.handler.(*TestClientHandler).c = c
+	require.NoError(t, client.keyshareEnrollWorker(irma.NewSchemeManagerIdentifier("test"), nil, "12345", "en"))
+	if err := <-c; err != nil {
+		t.Fatal(err)
+	}
+
+	require.NotNil(t, client.Attributes(credtype, 0))
+
 	go client.InitRecovery(&ms)
 	if err := <-ms.errorChannel; err != nil {
 		test.ClearTestStorage(t)
@@ -328,6 +346,7 @@ func TestManualSessionRecovery(t *testing.T) {
 	}
 
 	client = <- ms.recoveryChannel
+
 	go client.NewManualSession(request, &ms)
 	if err := <-ms.errorChannel; err != nil {
 		test.ClearTestStorage(t)
@@ -414,7 +433,6 @@ func (sh *ManualSessionHandler) GetBackup(callback BackupHandler) {
 		sh.errorChannel <- &irma.SessionError{Err: errors.New("Backup file not generated")}
 		callback(false, nil)
 	}
-	fmt.Println(hex.EncodeToString(backup))
 	callback(true, backup)
 }
 
@@ -486,5 +504,9 @@ func (sh *ManualSessionHandler) RecoveryBlocked(duration int) {
 
 func (sh *ManualSessionHandler) RecoveryError(err error) {
 	fmt.Println(err)
+	sh.errorChannel <- &irma.SessionError{Err: err}
+}
+
+func (sh *ManualSessionHandler) RecoveryPhraseIncorrect(err error) {
 	sh.errorChannel <- &irma.SessionError{Err: err}
 }
