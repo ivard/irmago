@@ -149,15 +149,20 @@ func (entry *LogEntry) UnmarshalJSON(bytes []byte) error {
 		return err
 	}
 
-	*entry = LogEntry{
-		Type: temp.Type,
-		Time: temp.Time,
-		SessionInfo: &irma.SessionInfo{
+	var sessionInfo *irma.SessionInfo
+	if temp.SessionInfo != nil {
+		sessionInfo = &irma.SessionInfo{
 			Jwt:     temp.SessionInfo.Jwt,
 			Nonce:   temp.SessionInfo.Nonce,
 			Context: temp.SessionInfo.Context,
 			Keys:    make(map[irma.IssuerIdentifier]int),
-		},
+		}
+	}
+
+	*entry = LogEntry{
+		Type: temp.Type,
+		Time: temp.Time,
+		SessionInfo:   sessionInfo,
 		Removed:       temp.Removed,
 		Disclosed:     temp.Disclosed,
 		Received:      temp.Received,
@@ -166,8 +171,10 @@ func (entry *LogEntry) UnmarshalJSON(bytes []byte) error {
 	}
 
 	// TODO remove on protocol upgrade
-	for iss, count := range temp.SessionInfo.Keys {
-		entry.SessionInfo.Keys[irma.NewIssuerIdentifier(iss)] = count
+	if temp.SessionInfo != nil {
+		for iss, count := range temp.SessionInfo.Keys {
+			entry.SessionInfo.Keys[irma.NewIssuerIdentifier(iss)] = count
+		}
 	}
 
 	return nil
