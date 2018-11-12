@@ -11,7 +11,9 @@ import (
     "github.com/go-errors/errors"
     "crypto/aes"
     "crypto/cipher"
+    "golang.org/x/crypto/nacl/box"
     "golang.org/x/crypto/scrypt"
+    "golang.org/x/crypto/curve25519"
     "encoding/json"
     "io/ioutil"
     "os"
@@ -22,7 +24,6 @@ import (
 	"github.com/tyler-smith/go-bip39"
     "strings"
     "log"
-    "bytes"
 )
 
 type deviceKey struct {
@@ -36,8 +37,8 @@ type backupMetadata struct {
 }
 
 type userKeyPair struct {
-    PublicKey  *rsa.PublicKey `json:"publicRecoveryKey"`
-    privateKey *rsa.PrivateKey
+    PublicKey  [32]byte `json:"publicRecoveryKey"`
+    privateKey [32]byte
 }
 
 type recoverySession struct {
@@ -285,12 +286,6 @@ func (rs *recoverySession) aesDecrypt(data []byte) (plaintext []byte, err error)
 }
 
 func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte) {
-    rng := rand.Reader
-    ciphertext, err := rsa.EncryptPKCS1v15(rng, bmeta.UserKeyPair.PublicKey, plain)
-    if err != nil {
-        panic(err)
-    }
-    /*
     dummyAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
 
     // Server boolean indicates whether the key of the user must be used, otherwise only the user keys are used
@@ -303,13 +298,11 @@ func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte) {
     enc = &bmeta.UserKeyPair.PublicKey
 
     // This encrypts msg and appends the result to the nonce.
-    ciphertext = box.Seal(nonce[:], plain, &nonce, enc, dummyAuthKey)*/
-
+    ciphertext = box.Seal(nonce[:], plain, &nonce, enc, dummyAuthKey)
     return
 }
 
-func curveDecrypt (ciphertext []byte, privateKey *rsa.PrivateKey) (plain []byte, err error) {
-    /*
+func curveDecrypt (ciphertext []byte, privateKey [32]byte) (plain []byte, err error) {
     dummyPrivAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
     dummyPubAuthKey := new([32]byte)
     curve25519.ScalarBaseMult(dummyPubAuthKey, dummyPrivAuthKey)
@@ -321,29 +314,18 @@ func curveDecrypt (ciphertext []byte, privateKey *rsa.PrivateKey) (plain []byte,
     if !ok {
         return nil, errors.New("Decryption error, was the right key supplied?")
     }
-    return plain, nil*/
-    rng := rand.Reader
-    plain, err = rsa.DecryptPKCS1v15(rng, privateKey, ciphertext)
-    return
+    return plain, nil
 }
 
 func genKeyPair(phrase []byte) (pair *userKeyPair, err error) {
-    pair = &userKeyPair{}
-    key, err := scrypt.Key(phrase, []byte(""), 1<<16, 16, 4, 512) // Unsalted because phrase is based on key
-    reader := bytes.NewReader(key)
-    pair.privateKey, err = rsa.GenerateKey(reader, 4096)
-    if err = pair.privateKey.Validate(); err != nil {
-        return nil, err
-    }
-    pair.PublicKey = &pair.privateKey.PublicKey
-
-    /*
+    err = nil
+    key, err := scrypt.Key(phrase, []byte(""), 1<<16, 16, 4, 32) // Unsalted because phrase is based on key
     if err != nil {
         return
     }
     pair = &userKeyPair{}
     copy(pair.privateKey[:], key[:32])
-    curve25519.ScalarBaseMult(&pair.PublicKey, &pair.privateKey)*/
+    curve25519.ScalarBaseMult(&pair.PublicKey, &pair.privateKey)
     return
 }
 
