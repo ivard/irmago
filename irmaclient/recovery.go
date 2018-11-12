@@ -166,10 +166,15 @@ func (rs *recoverySession) verifyPinAttempt(pin string, recovery bool) (
 
 // Ask for a pin, repeatedly if necessary, and either continue the recovery protocol
 // with authorization, or stop the keyshare protocol and inform of failure.
-func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
+func (rs *recoverySession) VerifyPin(attempts int, recovery bool) () {
     if rs.BackupMeta.EncRecoveryNonce == nil {
         // Should only happen in case of recovery initialization
-        rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(rs.BackupMeta.KeyshareServer.Nonce)
+        encNonce, err := rs.BackupMeta.curveEncrypt(rs.BackupMeta.KeyshareServer.Nonce)
+        if err != nil {
+            rs.handler.RecoveryError(errors.New("PIN nonce could not be encrypted"))
+            return
+        }
+        rs.BackupMeta.EncRecoveryNonce = encNonce
     }
     if rs.pin != "" {
         success, _, _, err := rs.verifyPinAttempt(rs.pin, recovery)
@@ -209,7 +214,7 @@ func (rs *recoverySession) VerifyPin(attempts int, recovery bool) {
 // Keyshare server returns decryption key and that key is stored
 func (rs *recoverySession) renewDeviceKeys() (err error) {
     newDevResp := &recoveryNewDeviceResponse{}
-    rs.transport.Get("users/recovery/request-new-device", newDevResp)
+    err = rs.transport.Get("users/recovery/request-new-device", newDevResp)
 
     delta, err := gabi.RandomBigInt(128)
 	if err != nil {
@@ -221,7 +226,10 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
 
     rr := recoveryRequest{delta.String(), rs.BackupMeta.KeyshareServer.HashedPin(rs.pin), rs.RedPacketBytes}
     resp := &recoveryServerKeyResponse{}
-    rs.transport.Post("users/recovery/new-device", resp, rr)
+    err = rs.transport.Post("users/recovery/new-device", resp, rr)
+    if err != nil {
+        return
+    }
 
 	hash := sha256.Sum256([]byte(resp.Delta))
 	if hex.EncodeToString(hash[:]) != newDevResp.ServerDeltaHash {
@@ -235,11 +243,14 @@ func (rs *recoverySession) renewDeviceKeys() (err error) {
     rs.BackupMeta.KeyshareServer.DeviceKey = &deviceKey{delta.Xor(delta, serverDelta)}
     m, err := rs.client.storage.LoadKeyshareServers()
     if err != nil{
-        return err
+        return
     }
     m[rs.BackupMeta.KeyshareServer.SchemeManagerIdentifier] = rs.BackupMeta.KeyshareServer
-    rs.client.storage.StoreKeyshareServers(m)
+    err = rs.client.storage.StoreKeyshareServers(m)
     arr, err := hex.DecodeString(resp.Key)
+    if err != nil {
+        return
+    }
 	copy(rs.decryptionKeyBluePacket[:], arr)
     return nil
 }
@@ -249,7 +260,7 @@ func (rs *recoverySession) serverEncrypt(data []byte) (err error) {
     if _, err := io.ReadFull(rand.Reader, rs.decryptionKeyBluePacket[:]); err != nil {
         return err
     }
-    block, _ := aes.NewCipher(rs.decryptionKeyBluePacket[:])
+    block, err := aes.NewCipher(rs.decryptionKeyBluePacket[:])
     gcm, err := cipher.NewGCM(block)
     if err != nil {
         return err
@@ -261,7 +272,10 @@ func (rs *recoverySession) serverEncrypt(data []byte) (err error) {
     rs.BluePacketBytes = gcm.Seal(nonce, nonce, data, nil)
 
     rp := redPacket{hex.EncodeToString(rs.decryptionKeyBluePacket[:]), rs.BackupMeta.KeyshareServer.Username}
-    rpBytes, _ := json.Marshal(rp)
+    rpBytes, err := json.Marshal(rp)
+    if err != nil {
+        return
+    }
     rs.RedPacketBytes, err = rs.rsaEncrypt(rpBytes)
     return
 }
@@ -285,13 +299,13 @@ func (rs *recoverySession) aesDecrypt(data []byte) (plaintext []byte, err error)
     return plaintext, nil
 }
 
-func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte) {
+func (bmeta *backupMetadata) curveEncrypt (plain []byte) (ciphertext []byte, err error) {
     dummyAuthKey := new([32]byte) // Zero initialized auth key, authentication is not needed
 
     // Server boolean indicates whether the key of the user must be used, otherwise only the user keys are used
     var nonce [24]byte
     if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
-        panic(err)
+        return nil, err
     }
 
     var enc *[32]byte
@@ -417,7 +431,9 @@ func (client *Client) InitRecovery(h recoverySessionHandler) {
         kssStore.PrivateKey = nil
 
         // Nonce (salt) must be stored encrypted to prevent leakage when device is lost
-        rs.BackupMeta.EncRecoveryNonce = rs.BackupMeta.curveEncrypt(salt[:])
+        if rs.BackupMeta.EncRecoveryNonce, err = rs.BackupMeta.curveEncrypt(salt[:]); err != nil {
+            return
+        }
         status := recoveryInitResponse{}
         err = rs.transport.Post("users/recovery/setup", &status, recoveryInitRequest{
             HashedPin: rs.BackupMeta.HashedPin(pin),
@@ -476,7 +492,11 @@ func (client *Client) MakeBackup(h recoverySessionHandler) {
     	return
 	}
 
-    backup := backups[0].BackupMeta.curveEncrypt(backupJson) // The user private key should be the same for all backups
+    backup, err := backups[0].BackupMeta.curveEncrypt(backupJson) // The user private key should be the same for all backups
+    if (err != nil) {
+        h.RecoveryError(err)
+        return
+    }
     h.OutputBackup(backup)
 }
 
@@ -532,6 +552,7 @@ func (c *Client) decryptAndRecoverBackup(phrase []string, h recoverySessionHandl
         return
     }
 
+    // Erase all previous data before replacing backup
     if err = c.removeStoredData(); err!=nil {
         h.RecoveryError(err)
         return
@@ -600,16 +621,20 @@ func (c *Client) getSignatures(needed []string) (sigs map[string][]byte, err err
     return
 }
 
-func (c *Client) storeSignatures (sigs map[string][]byte){
+func (c *Client) storeSignatures (sigs map[string][]byte) (err error){
     if _, err := os.Stat(c.storage.path("sigs")); os.IsNotExist(err) {
-        os.Mkdir(c.storage.path("sigs"), 0755)
+        err = os.Mkdir(c.storage.path("sigs"), 0755)
+        if err != nil {
+            return err
+        }
     }
     for file, content := range sigs {
         if _, err := os.Stat(c.storage.path(file)); err == nil {
-            os.Remove(c.storage.path(file))
+            err = os.Remove(c.storage.path(file))
         }
-        ioutil.WriteFile(c.storage.path(file), content, 0600)
+        err = ioutil.WriteFile(c.storage.path(file), content, 0600)
     }
+    return err
 }
 
 func (c *Client) storageToBackup(kss *keyshareServer) (result []byte, err error) {
@@ -631,7 +656,7 @@ func (c *Client) storageToBackup(kss *keyshareServer) (result []byte, err error)
     }
     sigsJson, err := json.Marshal(sigs)
     if err != nil {
-    	panic("JSON library produced invalid JSON")
+    	return nil, errors.New("App storage could not be converted to backup JSON")
 	}
 
     b := backup{
@@ -681,7 +706,7 @@ func (c *Client) backupToStorage(backupFile []byte, kss *keyshareServer) (err er
     	return err
 	}
 
-    c.storeSignatures(sigs)
+    err = c.storeSignatures(sigs)
     b.KeyshareServer.Nonce = kss.Nonce
     b.KeyshareServer.DeviceKey = kss.DeviceKey
 
