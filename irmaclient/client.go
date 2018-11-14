@@ -404,10 +404,9 @@ func (client *Client) findCredentialSecretKey(smid irma.SchemeManagerIdentifier)
 		return client.secretkey.Key
 	}
 
-	keyshareServers := client.keyshareServers[smid]
-	//TODO Why is there only one?
+	kss := client.keyshareServers[smid]
 
-	return new(big.Int).Add(client.secretkey.Key, keyshareServers.DeviceKey.Key)
+	return new(big.Int).Add(client.secretkey.Key, kss.DeviceKey.Key)
 }
 
 // credential returns the requested credential, or nil if we do not have it.
