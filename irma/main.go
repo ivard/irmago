@@ -1,7 +1,12 @@
 package main
 
-import "github.com/privacybydesign/irmago/irma/cmd"
+import (
+	"fmt"
+	"github.com/privacybydesign/irmago/irma/cmd"
+)
 
 func main() {
 	cmd.Execute()
+	password := "12345"
+	fmt.Println(password)
 }
