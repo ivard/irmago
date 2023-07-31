@@ -49,6 +49,7 @@ type keyshareSession struct {
 	issuerProofNonce *big.Int
 	timestamp        *atum.Timestamp
 	pinCheck         bool
+	bsnOccurrences    []gabi.ProofBuilderListIndex
 }
 
 type keyshareServer struct {
@@ -103,6 +104,7 @@ func startKeyshareSession(
 	implicitDisclosure [][]*irma.AttributeIdentifier,
 	issuerProofNonce *big.Int,
 	timestamp *atum.Timestamp,
+	bsnOccurrences []gabi.ProofBuilderListIndex,
 ) {
 	ksscount := 0
 
@@ -143,6 +145,7 @@ func startKeyshareSession(
 		issuerProofNonce: issuerProofNonce,
 		timestamp:        timestamp,
 		pinCheck:         false,
+		bsnOccurrences:    bsnOccurrences,
 	}
 
 	for managerID := range schemeIDs {
@@ -395,7 +398,7 @@ func (ks *keyshareSession) GetCommitments() {
 // receive their responses (2nd and 3rd message in Schnorr zero-knowledge protocol).
 func (ks *keyshareSession) GetProofPs() {
 	_, issig := ks.session.(*irma.SignatureRequest)
-	challenge, err := ks.builders.Challenge(ks.session.Base().GetContext(), ks.session.GetNonce(ks.timestamp), issig)
+	challenge, err := ks.builders.Challenge(ks.session.Base().GetContext(), ks.session.GetNonce(ks.timestamp), issig, [][]gabi.ProofBuilderListIndex{ks.bsnOccurrences})
 	if err != nil {
 		ks.sessionHandler.KeyshareError(&ks.keyshareServer.SchemeManagerIdentifier, err)
 		return

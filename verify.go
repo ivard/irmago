@@ -373,6 +373,33 @@ func (d *Disclosure) VerifyAgainstRequest(
 		return list, ProofStatusMissingAttributes, nil
 	}
 
+	// Check BSN
+	var bsnAResponse *big.Int
+	for i, credAttrs := range list { // TODO: indices might contain multiple credentials.
+		if len(credAttrs) == 0 {
+			continue
+		}
+		proofD, ok := d.Proofs[d.Indices[i][0].CredentialIndex].(*gabi.ProofD)
+		if !ok {
+			continue
+		}
+		if credAttrs[0].Identifier.CredentialTypeIdentifier().String() == "irma-demo.gemeente.personalData" {
+			if bsnAResponse == nil {
+				bsnAResponse = proofD.AResponses[18]
+			} else if proofD.AResponses[18].Cmp(bsnAResponse) != 0 {
+				Logger.Debug("BSN mismatch")
+				return list, ProofStatusInvalid, nil
+			}
+		} else if credAttrs[0].Identifier.CredentialTypeIdentifier().String() == "irma-demo.chipsoft.bsn" {
+			if bsnAResponse == nil {
+				bsnAResponse = proofD.AResponses[2]
+			} else if proofD.AResponses[2].Cmp(bsnAResponse) != 0 {
+				Logger.Debug("BSN mismatch")
+				return list, ProofStatusInvalid, nil
+			}
+		}
+	}
+
 	// Check that all credentials were unexpired
 	expired, err := ProofList(d.Proofs).Expired(configuration, validAt)
 	if err != nil {

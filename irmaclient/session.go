@@ -475,6 +475,19 @@ func (session *session) doSession(proceed bool, choice *irma.DisclosureChoice) {
 	}
 	session.Handler.StatusUpdate(session.Action, irma.ClientStatusCommunicating)
 
+	var bsnOccurrences []gabi.ProofBuilderListIndex
+	for i, group := range choice.Attributes { // TODO: indices might contain multiple credentials.
+		if len(group) == 0 {
+			continue
+		}
+		// TODO: builder index i is not necessarily the same as the index of the credential in the proof.
+		if group[0].CredentialIdentifier().Type.String() == "irma-demo.gemeente.personalData" {
+			bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 18})
+		} else if group[0].CredentialIdentifier().Type.String() == "irma-demo.chipsoft.bsn" {
+			bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 2})
+		}
+	}
+
 	// wait for revocation preparation to finish
 	err := <-session.prepRevocation
 	if err != nil {
@@ -483,7 +496,7 @@ func (session *session) doSession(proceed bool, choice *irma.DisclosureChoice) {
 	}
 
 	if !session.Distributed() {
-		message, err := session.getProof()
+		message, err := session.getProof([][]gabi.ProofBuilderListIndex{bsnOccurrences})
 		if err != nil {
 			session.fail(&irma.SessionError{ErrorType: irma.ErrorCrypto, Err: err})
 			return
@@ -505,6 +518,7 @@ func (session *session) doSession(proceed bool, choice *irma.DisclosureChoice) {
 			session.implicitDisclosure,
 			session.issuerProofNonce,
 			session.timestamp,
+			bsnOccurrences,
 		)
 	}
 }
@@ -611,15 +625,15 @@ func (session *session) getBuilders() (gabi.ProofBuilderList, irma.DisclosedAttr
 
 // getProofs computes the disclosure proofs or secretkey-knowledge proof (in case of disclosure/signing
 // and issuing respectively) to be sent to the server.
-func (session *session) getProof() (interface{}, error) {
+func (session *session) getProof(equalRandomizers [][]gabi.ProofBuilderListIndex) (interface{}, error) {
 	var message interface{}
 	var err error
 
 	switch session.Action {
 	case irma.ActionSigning, irma.ActionDisclosing:
-		message, session.timestamp, err = session.client.Proofs(session.choice, session.request)
+		message, session.timestamp, err = session.client.Proofs(session.choice, session.request, equalRandomizers)
 	case irma.ActionIssuing:
-		message, session.builders, err = session.client.IssueCommitments(session.request.(*irma.IssuanceRequest), session.choice)
+		message, session.builders, err = session.client.IssueCommitments(session.request.(*irma.IssuanceRequest), session.choice, equalRandomizers)
 	}
 
 	return message, err

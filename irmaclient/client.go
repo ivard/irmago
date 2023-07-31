@@ -920,14 +920,14 @@ func (client *Client) ProofBuilders(choice *irma.DisclosureChoice, request irma.
 }
 
 // Proofs computes disclosure proofs containing the attributes specified by choice.
-func (client *Client) Proofs(choice *irma.DisclosureChoice, request irma.SessionRequest) (*irma.Disclosure, *atum.Timestamp, error) {
+func (client *Client) Proofs(choice *irma.DisclosureChoice, request irma.SessionRequest, equalRandomizers [][]gabi.ProofBuilderListIndex) (*irma.Disclosure, *atum.Timestamp, error) {
 	builders, choices, timestamp, err := client.ProofBuilders(choice, request)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	_, issig := request.(*irma.SignatureRequest)
-	proofs, err := builders.BuildProofList(request.Base().GetContext(), request.GetNonce(timestamp), issig)
+	proofs, err := builders.BuildProofList(request.Base().GetContext(), request.GetNonce(timestamp), issig, equalRandomizers)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -977,13 +977,13 @@ func (client *Client) IssuanceProofBuilders(request *irma.IssuanceRequest, choic
 
 // IssueCommitments computes issuance commitments, along with disclosure proofs specified by choice,
 // and also returns the credential builders which will become the new credentials upon combination with the issuer's signature.
-func (client *Client) IssueCommitments(request *irma.IssuanceRequest, choice *irma.DisclosureChoice,
+func (client *Client) IssueCommitments(request *irma.IssuanceRequest, choice *irma.DisclosureChoice, equalRandomizers [][]gabi.ProofBuilderListIndex,
 ) (*irma.IssueCommitmentMessage, gabi.ProofBuilderList, error) {
 	builders, choices, issuerProofNonce, err := client.IssuanceProofBuilders(request, choice)
 	if err != nil {
 		return nil, nil, err
 	}
-	proofs, err := builders.BuildProofList(request.GetContext(), request.GetNonce(nil), false)
+	proofs, err := builders.BuildProofList(request.GetContext(), request.GetNonce(nil), false, equalRandomizers)
 	if err != nil {
 		return nil, nil, err
 	}

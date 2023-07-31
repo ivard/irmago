@@ -285,7 +285,7 @@ func testRevocationAll(t *testing.T, dbType string) {
 		ids, err := candidates[0][0].Choose()
 		require.NoError(t, err)
 		choice := &irma.DisclosureChoice{Attributes: [][]*irma.AttributeIdentifier{ids}}
-		disclosure, _, err := client.Proofs(choice, request)
+		disclosure, _, err := client.Proofs(choice, request, [][]gabi.ProofBuilderListIndex{})
 		require.NoError(t, err)
 		proofAcc, err := disclosure.Proofs[0].(*gabi.ProofD).NonRevocationProof.SignedAccumulator.UnmarshalVerify(pk)
 		require.NoError(t, err)
@@ -314,7 +314,7 @@ func testRevocationAll(t *testing.T, dbType string) {
 
 		// Use newrequest to update client to index 2 and contruct a disclosure proof
 		require.NoError(t, client.NonrevPrepare(newrequest))
-		disclosure, _, err = client.Proofs(choice, newrequest)
+		disclosure, _, err = client.Proofs(choice, newrequest, [][]gabi.ProofBuilderListIndex{})
 		require.NoError(t, err)
 		proofAcc, err = disclosure.Proofs[0].(*gabi.ProofD).NonRevocationProof.SignedAccumulator.UnmarshalVerify(pk)
 		require.NoError(t, err)
@@ -330,7 +330,7 @@ func testRevocationAll(t *testing.T, dbType string) {
 		// If the client does not send a nonrevocation proof the proof is invalid
 		// clear revocation data from newrequest and create a disclosure from it
 		newrequest.Revocation = nil
-		disclosure, _, err = client.Proofs(choice, newrequest)
+		disclosure, _, err = client.Proofs(choice, newrequest, [][]gabi.ProofBuilderListIndex{})
 		require.NoError(t, err)
 		// verify disclosure against request that still requests nonrevocation proofs
 		_, status, err = disclosure.Verify(client.Configuration, request)
