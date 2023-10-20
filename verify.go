@@ -376,7 +376,7 @@ func (d *Disclosure) VerifyAgainstRequest(
 	// Check BSN
 	var bsnAResponse *big.Int
 	for i, credAttrs := range list { // TODO: indices might contain multiple credentials.
-		if len(credAttrs) == 0 {
+		if len(credAttrs) == 0 || credAttrs[0].Status != AttributeProofStatusPresent { // TODO: check if this is correct
 			continue
 		}
 		proofD, ok := d.Proofs[d.Indices[i][0].CredentialIndex].(*gabi.ProofD)
