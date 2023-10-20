@@ -476,15 +476,17 @@ func (session *session) doSession(proceed bool, choice *irma.DisclosureChoice) {
 	session.Handler.StatusUpdate(session.Action, irma.ClientStatusCommunicating)
 
 	var bsnOccurrences []gabi.ProofBuilderListIndex
-	for i, group := range choice.Attributes { // TODO: indices might contain multiple credentials.
-		if len(group) == 0 {
-			continue
-		}
-		// TODO: builder index i is not necessarily the same as the index of the credential in the proof.
-		if group[0].CredentialIdentifier().Type.String() == "irma-demo.gemeente.personalData" {
-			bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 18})
-		} else if group[0].CredentialIdentifier().Type.String() == "irma-demo.chipsoft.bsn" {
-			bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 2})
+	if choice != nil {
+		for i, group := range choice.Attributes { // TODO: indices might contain multiple credentials.
+			if len(group) == 0 {
+				continue
+			}
+			// TODO: builder index i is not necessarily the same as the index of the credential in the proof.
+			if group[0].CredentialIdentifier().Type.String() == "irma-demo.gemeente.personalData" {
+				bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 18})
+			} else if group[0].CredentialIdentifier().Type.String() == "irma-demo.chipsoft.bsn" {
+				bsnOccurrences = append(bsnOccurrences, gabi.ProofBuilderListIndex{BuilderIndex: i, AttributeIndex: 2})
+			}
 		}
 	}
 
