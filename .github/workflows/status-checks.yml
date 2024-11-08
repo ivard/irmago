@@ -14,7 +14,7 @@ on:
 jobs:
 
   build:
-    concurrency: test
+    concurrency: test-${{ matrix.os }}-${{ matrix.arch }}
     strategy:
       matrix:
         os: [ linux, darwin, windows ]
